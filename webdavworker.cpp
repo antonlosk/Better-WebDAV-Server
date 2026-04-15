@@ -12,6 +12,7 @@
 #include <QMimeType>
 #include <QUrl>
 #include <QRegularExpression>
+#include <utility>
 
 WebDAVWorker::WebDAVWorker(MainWindow *mw, quint16 p, QObject *parent)
     : QObject(parent), tcpServer(nullptr), mainWindow(mw), port(p), isRunning(false)
