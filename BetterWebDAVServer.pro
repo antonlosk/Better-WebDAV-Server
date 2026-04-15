@@ -8,9 +8,13 @@ SOURCES += \
     main.cpp \
     mainwindow.cpp \
     webdavserver.cpp \
-    webdavworker.cpp
+    webdavworker.cpp \
+    webdavxmlbuilder.cpp \
+    fileutils.cpp
 
 HEADERS += \
     mainwindow.h \
     webdavserver.h \
-    webdavworker.h
+    webdavworker.h \
+    webdavxmlbuilder.h \
+    fileutils.h

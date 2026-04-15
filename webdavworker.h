@@ -24,7 +24,7 @@ public slots:
 
 signals:
     void appendLog(const QString &message);
-    void finished(); // опционально
+    void finished();
 
 private slots:
     void onNewConnection();
@@ -56,12 +56,6 @@ private:
     };
 
     void handleRequest(QTcpSocket *socket, ClientState &state);
-    void sendResponse(QTcpSocket *socket, int statusCode, const QByteArray &contentType,
-                      const QByteArray &body, const QMap<QByteArray, QByteArray> &extraHeaders = {});
-    void sendStreamResponse(QTcpSocket *socket, int statusCode, const QByteArray &contentType,
-                            QFile *file, const QMap<QByteArray, QByteArray> &extraHeaders = {});
-    void sendHeadersOnly(QTcpSocket *socket, int statusCode, const QByteArray &contentType,
-                         qint64 contentLength, const QMap<QByteArray, QByteArray> &extraHeaders = {});
 
     void handlePropfind(QTcpSocket *socket, ClientState &state, const QString &decodedPath);
     void handleMkcol(QTcpSocket *socket, ClientState &state, const QString &decodedPath);
@@ -74,10 +68,6 @@ private:
 
     void processChunkedBody(QTcpSocket *socket, ClientState &state);
     void processContentLengthPut(QTcpSocket *socket, ClientState &state);
-
-    QByteArray getMimeType(const QString &fileName) const;
-    QString urlDecode(const QString &path) const;
-    QString safeLocalPath(const QString &decodedPath) const;
 
     QTcpServer *tcpServer;
     MainWindow *mainWindow;
