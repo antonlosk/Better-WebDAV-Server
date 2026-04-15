@@ -10,11 +10,14 @@ SOURCES += \
     webdavserver.cpp \
     webdavworker.cpp \
     webdavxmlbuilder.cpp \
-    fileutils.cpp
+    fileutils.cpp \
+    webdavrequesthandler.cpp
 
 HEADERS += \
     mainwindow.h \
     webdavserver.h \
     webdavworker.h \
     webdavxmlbuilder.h \
-    fileutils.h
+    fileutils.h \
+    clientstate.h \
+    webdavrequesthandler.h
