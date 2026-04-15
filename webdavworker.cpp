@@ -15,8 +15,8 @@
 #include <QRegularExpression>
 #include <utility>
 
-WebDAVWorker::WebDAVWorker(MainWindow *mw, quint16 p, QObject *parent)
-    : QObject(parent), tcpServer(nullptr), mainWindow(mw), port(p), isRunning(false)
+WebDAVWorker::WebDAVWorker(MainWindow *mw, quint16 p, const QString &rootPath, QObject *parent)
+    : QObject(parent), tcpServer(nullptr), mainWindow(mw), port(p), isRunning(false), ROOT_PATH(rootPath)
 {
     requestHandler = new WebDAVRequestHandler(ROOT_PATH, this);
     connect(requestHandler, &WebDAVRequestHandler::appendLog, this, &WebDAVWorker::appendLog);
@@ -69,6 +69,7 @@ void WebDAVWorker::onNewConnection()
     QTcpSocket *socket = tcpServer->nextPendingConnection();
     if (!socket) return;
     socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
+    socket->setSocketOption(QAbstractSocket::KeepAliveOption, 1);   // <-- добавлено
     connect(socket, &QTcpSocket::readyRead, this, &WebDAVWorker::onReadyRead);
     connect(socket, &QTcpSocket::disconnected, this, &WebDAVWorker::onDisconnected);
     ClientState state;
@@ -112,7 +113,6 @@ void WebDAVWorker::onDisconnected()
     }
     if (clients.contains(socket)) {
         ClientState &state = clients[socket];
-        // Удаляем только недокачанные файлы
         if (state.putFile && !state.uploadCompleted) {
             QString filePath = state.putFile->fileName();
             state.putFile->close();
@@ -129,7 +129,14 @@ void WebDAVWorker::onDisconnected()
             QFile::remove(filePath);
             emit appendLog(QString("Removed incomplete chunked PUT file: %1").arg(filePath));
         }
-        // Безусловные блоки удалены — двойного удаления не будет
+        if (state.uploadFile) {
+            state.uploadFile->close();
+            delete state.uploadFile;
+        }
+        if (state.putFile) {
+            state.putFile->close();
+            delete state.putFile;
+        }
         clients.remove(socket);
     }
     emit appendLog("Client disconnected");

@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QPlainTextEdit>
+#include <QSettings>
 #include "webdavserver.h"
 
 QT_BEGIN_NAMESPACE
@@ -27,11 +28,14 @@ private slots:
     void startServer();
     void stopServer();
     void exitApplication();
-    void onServerStarted(bool success);   // новый слот
+    void onServerStarted(bool success);
+    void chooseRootFolder();
 
 private:
     void setupUI();
     QString getCurrentTimestamp() const;
+    void loadSettings();
+    void saveSettings();
 
     QPlainTextEdit *logArea;
     QLabel *pathLabel;
@@ -42,6 +46,8 @@ private:
     QToolBar *bottomToolBar;
 
     WebDAVServer *webdavServer;
+    QString rootPath;
+    QSettings settings;
 };
 
 #endif // MAINWINDOW_H

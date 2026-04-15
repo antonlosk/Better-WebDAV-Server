@@ -10,12 +10,16 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QApplication>
+#include <QFileDialog>
+#include <QSettings>
+#include <QDir>
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), webdavServer(nullptr)
+    : QMainWindow(parent), webdavServer(nullptr), settings("MyCompany", "BetterWebDAV")
 {
+    loadSettings();
     setupUI();
-    webdavServer = new WebDAVServer(this, this);
+    webdavServer = new WebDAVServer(this, rootPath, this);
     connect(webdavServer, &WebDAVServer::appendLog, this, &MainWindow::appendLog);
     connect(webdavServer, &WebDAVServer::serverStarted, this, &MainWindow::onServerStarted);
     appendLog("Приложение запущено. Добро пожаловать в Better WebDAV Server!");
@@ -23,6 +27,7 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    saveSettings();
     if (webdavServer) {
         webdavServer->stopServer();
         delete webdavServer;
@@ -37,7 +42,11 @@ void MainWindow::setupUI()
     topToolBar->setMovable(false);
     addToolBar(Qt::TopToolBarArea, topToolBar);
 
-    pathLabel = new QLabel("Путь: C:/", this);
+    pathLabel = new QLabel("Путь: " + rootPath, this);
+
+    QPushButton *browseButton = new QPushButton("Обзор", this);
+    connect(browseButton, &QPushButton::clicked, this, &MainWindow::chooseRootFolder);
+
     startButton = new QPushButton("Start", this);
     stopButton = new QPushButton("Stop", this);
     stopButton->setEnabled(false);
@@ -52,6 +61,7 @@ void MainWindow::setupUI()
     menuButton->setPopupMode(QToolButton::InstantPopup);
 
     topToolBar->addWidget(pathLabel);
+    topToolBar->addWidget(browseButton);
     topToolBar->addWidget(startButton);
     topToolBar->addWidget(stopButton);
 
@@ -83,7 +93,6 @@ void MainWindow::startServer()
         appendLog("Ошибка: Сервер не инициализирован.");
         return;
     }
-    // Не меняем состояние кнопок здесь – ждём сигнала serverStarted
     webdavServer->startServer(8080);
 }
 
@@ -122,7 +131,38 @@ void MainWindow::onServerStarted(bool success)
     }
 }
 
+void MainWindow::chooseRootFolder()
+{
+    QString dir = QFileDialog::getExistingDirectory(this, "Выберите корневую папку WebDAV",
+                                                    rootPath,
+                                                    QFileDialog::ShowDirsOnly);
+    if (!dir.isEmpty()) {
+        rootPath = QDir::toNativeSeparators(dir);
+        if (!rootPath.endsWith(QDir::separator()))
+            rootPath += QDir::separator();
+        pathLabel->setText("Путь: " + rootPath);
+        saveSettings();
+        appendLog("Корневая папка изменена на: " + rootPath);
+        if (webdavServer && stopButton->isEnabled()) {
+            stopServer();
+            startServer();
+        }
+    }
+}
+
 QString MainWindow::getCurrentTimestamp() const
 {
     return QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
+}
+
+void MainWindow::loadSettings()
+{
+    rootPath = settings.value("rootPath", "C:/").toString();
+    if (!rootPath.endsWith('/') && !rootPath.endsWith('\\'))
+        rootPath += '/';
+}
+
+void MainWindow::saveSettings()
+{
+    settings.setValue("rootPath", rootPath);
 }

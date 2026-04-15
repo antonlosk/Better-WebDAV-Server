@@ -11,7 +11,7 @@ class WebDAVServer : public QObject
 {
     Q_OBJECT
 public:
-    explicit WebDAVServer(MainWindow *mainWindow, QObject *parent = nullptr);
+    explicit WebDAVServer(MainWindow *mainWindow, const QString &rootPath, QObject *parent = nullptr);
     ~WebDAVServer();
 
     bool startServer(quint16 port);
@@ -19,12 +19,13 @@ public:
 
 signals:
     void appendLog(const QString &message);
-    void serverStarted(bool success);   // новый сигнал
+    void serverStarted(bool success);
 
 private:
     QThread workerThread;
     WebDAVWorker *worker;
     MainWindow *mainWindow;
+    QString rootPath;
 };
 
 #endif // WEBDAVSERVER_H

@@ -12,7 +12,7 @@ QByteArray WebDAVXmlBuilder::buildPropfindResponse(const QString &path,
 {
     QFileInfo fileInfo(localPath);
     if (!fileInfo.exists())
-        return QByteArray(); // Пустой ответ – ошибка обрабатывается снаружи
+        return QByteArray();
 
     QByteArray xmlBody;
     QXmlStreamWriter xml(&xmlBody);
@@ -21,7 +21,6 @@ QByteArray WebDAVXmlBuilder::buildPropfindResponse(const QString &path,
     xml.writeStartElement("D:multistatus");
     xml.writeAttribute("xmlns:D", "DAV:");
 
-    // Сам ресурс
     xml.writeStartElement("D:response");
     xml.writeTextElement("D:href", path.toUtf8());
     xml.writeStartElement("D:propstat");
@@ -45,7 +44,6 @@ QByteArray WebDAVXmlBuilder::buildPropfindResponse(const QString &path,
     xml.writeEndElement(); // propstat
     xml.writeEndElement(); // response
 
-    // Содержимое папки при depth == 1
     if (depth == 1 && fileInfo.isDir()) {
         QDir dir(localPath);
         QFileInfoList entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot);
@@ -87,6 +85,7 @@ QByteArray WebDAVXmlBuilder::statusText(int statusCode)
     switch (statusCode) {
     case 200: return "OK";
     case 201: return "Created";
+    case 206: return "Partial Content";
     case 207: return "Multi-Status";
     case 400: return "Bad Request";
     case 403: return "Forbidden";
@@ -94,6 +93,7 @@ QByteArray WebDAVXmlBuilder::statusText(int statusCode)
     case 405: return "Method Not Allowed";
     case 409: return "Conflict";
     case 413: return "Payload Too Large";
+    case 416: return "Range Not Satisfiable";
     case 500: return "Internal Server Error";
     default:  return "Unknown";
     }
@@ -124,23 +124,41 @@ void WebDAVXmlBuilder::sendStreamResponse(QTcpSocket *socket,
                                           int statusCode,
                                           const QByteArray &contentType,
                                           QFile *file,
+                                          qint64 startByte,
+                                          qint64 endByte,
+                                          qint64 totalSize,
                                           const QMap<QByteArray, QByteArray> &extraHeaders)
 {
     QByteArray response = "HTTP/1.1 " + QByteArray::number(statusCode) + " " + statusText(statusCode) + "\r\n";
     response += "Content-Type: " + contentType + "\r\n";
-    response += "Content-Length: " + QByteArray::number(file->size()) + "\r\n";
-    response += "Connection: close\r\n";
 
+    qint64 contentLength = endByte - startByte + 1;
+    response += "Content-Length: " + QByteArray::number(contentLength) + "\r\n";
+
+    if (statusCode == 206) {
+        response += "Content-Range: bytes " + QByteArray::number(startByte) + "-" +
+                    QByteArray::number(endByte) + "/" + QByteArray::number(totalSize) + "\r\n";
+    }
+
+    response += "Accept-Ranges: bytes\r\n";
+    response += "Connection: close\r\n";
     for (auto it = extraHeaders.begin(); it != extraHeaders.end(); ++it) {
         response += it.key() + ": " + it.value() + "\r\n";
     }
     response += "\r\n";
     socket->write(response);
 
+    if (!file->seek(startByte)) {
+        file->close();
+        return;
+    }
+
     const qint64 chunkSize = 256 * 1024;
     QByteArray buffer(chunkSize, Qt::Uninitialized);
-    while (!file->atEnd()) {
-        qint64 bytesRead = file->read(buffer.data(), chunkSize);
+    qint64 bytesRemaining = contentLength;
+    while (bytesRemaining > 0 && !file->atEnd()) {
+        qint64 toRead = qMin(chunkSize, bytesRemaining);
+        qint64 bytesRead = file->read(buffer.data(), toRead);
         if (bytesRead <= 0) break;
         qint64 written = 0;
         while (written < bytesRead) {
@@ -150,11 +168,12 @@ void WebDAVXmlBuilder::sendStreamResponse(QTcpSocket *socket,
                 return;
             }
             written += ret;
-            if (!socket->waitForBytesWritten(1000)) {
+            if (!socket->waitForBytesWritten(10000)) { // ждём до 5 секунд
                 file->close();
                 return;
             }
         }
+        bytesRemaining -= bytesRead;
         if (socket->state() != QAbstractSocket::ConnectedState) break;
     }
     socket->flush();

@@ -16,7 +16,7 @@ class WebDAVWorker : public QObject
 {
     Q_OBJECT
 public:
-    explicit WebDAVWorker(MainWindow *mainWindow, quint16 port, QObject *parent = nullptr);
+    explicit WebDAVWorker(MainWindow *mainWindow, quint16 port, const QString &rootPath, QObject *parent = nullptr);
     ~WebDAVWorker();
 
 public slots:
@@ -26,7 +26,7 @@ public slots:
 signals:
     void appendLog(const QString &message);
     void finished();
-    void started(bool success);   // новый сигнал
+    void started(bool success);
 
 private slots:
     void onNewConnection();
@@ -41,7 +41,7 @@ private:
     WebDAVRequestHandler *requestHandler;
     quint16 port;
     bool isRunning;
-    const QString ROOT_PATH = "C:/";
+    QString ROOT_PATH;
 };
 
 #endif // WEBDAVWORKER_H

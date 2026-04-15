@@ -265,21 +265,81 @@ void WebDAVRequestHandler::handleGet(QTcpSocket *socket, ClientState &state, con
     QString localPath = FileUtils::safeLocalPath(decodedPath, ROOT_PATH);
     if (localPath.isEmpty()) {
         WebDAVXmlBuilder::sendResponse(socket, 403, "text/plain", "Forbidden");
+        emit appendLog(QString("GET: Forbidden (path traversal attempt) for %1").arg(decodedPath));
         return;
     }
+
+    emit appendLog(QString("GET: decodedPath=%1, localPath=%2").arg(decodedPath, localPath));
+
     QFileInfo fileInfo(localPath);
-    if (!fileInfo.exists() || fileInfo.isDir()) {
+    if (!fileInfo.exists()) {
         WebDAVXmlBuilder::sendResponse(socket, 404, "text/plain", "Not Found");
+        emit appendLog(QString("GET: File not found: %1").arg(localPath));
         return;
     }
+    if (fileInfo.isDir()) {
+        WebDAVXmlBuilder::sendResponse(socket, 404, "text/plain", "Not Found");
+        emit appendLog(QString("GET: Path is a directory: %1").arg(localPath));
+        return;
+    }
+
     QFile *file = new QFile(localPath);
     if (!file->open(QIODevice::ReadOnly)) {
         WebDAVXmlBuilder::sendResponse(socket, 403, "text/plain", "Forbidden");
+        emit appendLog(QString("GET: Cannot open file for reading: %1 (error: %2)").arg(localPath, file->errorString()));
         delete file;
         return;
     }
+
     QByteArray mimeType = FileUtils::getMimeType(fileInfo.fileName());
-    WebDAVXmlBuilder::sendStreamResponse(socket, 200, mimeType, file);
+
+    // Парсим Range
+    qint64 startByte = 0;
+    qint64 endByte = fileInfo.size() - 1;
+    bool rangeRequested = false;
+
+    QByteArray headers = state.requestHeaders;
+    for (const QByteArray &line : headers.split('\n')) {
+        QByteArray lowerLine = line.toLower();
+        if (lowerLine.startsWith("range:")) {
+            int colonPos = line.indexOf(':');
+            if (colonPos != -1) {
+                QByteArray value = line.mid(colonPos + 1).trimmed();
+                if (value.startsWith("bytes=")) {
+                    QByteArray rangeValue = value.mid(6);
+                    int dashPos = rangeValue.indexOf('-');
+                    if (dashPos != -1) {
+                        bool ok;
+                        startByte = rangeValue.left(dashPos).toLongLong(&ok);
+                        if (!ok) startByte = 0;
+                        if (dashPos < rangeValue.size() - 1) {
+                            endByte = rangeValue.mid(dashPos + 1).toLongLong(&ok);
+                            if (!ok) endByte = fileInfo.size() - 1;
+                        } else {
+                            endByte = fileInfo.size() - 1;
+                        }
+                        rangeRequested = true;
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    if (rangeRequested) {
+        if (startByte < 0) startByte = 0;
+        if (endByte >= fileInfo.size()) endByte = fileInfo.size() - 1;
+        if (startByte > endByte) {
+            WebDAVXmlBuilder::sendResponse(socket, 416, "text/plain", "Range Not Satisfiable");
+            delete file;
+            return;
+        }
+        // Всегда отвечаем 206, даже если запрошен весь файл (убрано преобразование в 200)
+        emit appendLog(QString("GET: Range request %1-%2/%3").arg(startByte).arg(endByte).arg(fileInfo.size()));
+    }
+
+    WebDAVXmlBuilder::sendStreamResponse(socket, rangeRequested ? 206 : 200, mimeType, file,
+                                         startByte, endByte, fileInfo.size());
     file->deleteLater();
 }
 

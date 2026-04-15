@@ -5,8 +5,8 @@
 #include <QThread>
 #include <QMetaObject>
 
-WebDAVServer::WebDAVServer(MainWindow *mw, QObject *parent)
-    : QObject(parent), worker(nullptr), mainWindow(mw)
+WebDAVServer::WebDAVServer(MainWindow *mw, const QString &rootPath, QObject *parent)
+    : QObject(parent), worker(nullptr), mainWindow(mw), rootPath(rootPath)
 {
 }
 
@@ -19,7 +19,7 @@ bool WebDAVServer::startServer(quint16 port)
 {
     if (worker) return true;
 
-    worker = new WebDAVWorker(mainWindow, port);
+    worker = new WebDAVWorker(mainWindow, port, rootPath);
     worker->moveToThread(&workerThread);
 
     connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
