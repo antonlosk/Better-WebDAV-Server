@@ -18,8 +18,8 @@ public:
     void stopServer();
 
 signals:
-    // Проксируем сигнал логирования из воркера
     void appendLog(const QString &message);
+    void serverStarted(bool success);   // новый сигнал
 
 private:
     QThread workerThread;

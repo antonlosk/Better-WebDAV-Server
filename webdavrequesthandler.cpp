@@ -315,7 +315,10 @@ void WebDAVRequestHandler::handlePut(QTcpSocket *socket, ClientState &state, con
             return;
         }
         file.close();
-        WebDAVXmlBuilder::sendResponse(socket, 201, "text/plain", "Created");
+
+        QMap<QByteArray, QByteArray> headers;
+        headers["Location"] = state.path.toUtf8();
+        WebDAVXmlBuilder::sendResponse(socket, 201, "text/plain", "Created", headers);
         emit appendLog(QString("PUT created empty file: %1").arg(localPath));
     }
 }
@@ -388,13 +391,15 @@ void WebDAVRequestHandler::handleMove(QTcpSocket *socket, ClientState &state)
     }
 
     QFileInfo destInfo(destLocal);
+    bool overwritten = destInfo.exists();
+
     QDir destDir = destInfo.dir();
     if (!destDir.exists() && !destDir.mkpath(".")) {
         WebDAVXmlBuilder::sendResponse(socket, 409, "text/plain", "Conflict: cannot create destination directory");
         return;
     }
 
-    if (destInfo.exists()) {
+    if (overwritten) {
         if (destInfo.isDir()) {
             QDir dir(destLocal);
             if (!dir.removeRecursively()) {
@@ -407,10 +412,17 @@ void WebDAVRequestHandler::handleMove(QTcpSocket *socket, ClientState &state)
     }
 
     bool success = QFile::rename(srcLocal, destLocal);
-    if (!success && srcInfo.isDir()) {
-        success = FileUtils::copyDirectoryRecursively(srcLocal, destLocal);
-        if (success) {
-            QDir(srcLocal).removeRecursively();
+    if (!success) {
+        if (srcInfo.isDir()) {
+            success = FileUtils::copyDirectoryRecursively(srcLocal, destLocal);
+            if (success) {
+                QDir(srcLocal).removeRecursively();
+            }
+        } else {
+            if (QFile::copy(srcLocal, destLocal)) {
+                QFile::remove(srcLocal);
+                success = true;
+            }
         }
     }
 
@@ -419,6 +431,8 @@ void WebDAVRequestHandler::handleMove(QTcpSocket *socket, ClientState &state)
         return;
     }
 
-    WebDAVXmlBuilder::sendResponse(socket, 201, "text/plain", "Created");
+    int statusCode = overwritten ? 204 : 201;
+    QByteArray statusText = overwritten ? "No Content" : "Created";
+    WebDAVXmlBuilder::sendResponse(socket, statusCode, "text/plain", statusText);
     emit appendLog(QString("MOVE %1 -> %2").arg(srcLocal, destLocal));
 }

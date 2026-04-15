@@ -35,12 +35,14 @@ void WebDAVWorker::start()
         emit appendLog(QString("Failed to listen on port %1: %2").arg(port).arg(tcpServer->errorString()));
         delete tcpServer;
         tcpServer = nullptr;
+        emit started(false);
         emit finished();
         return;
     }
     connect(tcpServer, &QTcpServer::newConnection, this, &WebDAVWorker::onNewConnection);
     isRunning = true;
     emit appendLog(QString("WebDAV Server: Started on port %1").arg(port));
+    emit started(true);
 }
 
 void WebDAVWorker::stop()
@@ -91,6 +93,10 @@ void WebDAVWorker::onSocketTimeout()
         if (socket->state() != QAbstractSocket::UnconnectedState)
             socket->abort();
     }
+    // Очищаем свойство, чтобы избежать висячего указателя
+    if (socket) {
+        socket->setProperty("timeoutTimer", QVariant());
+    }
     timer->deleteLater();
 }
 
@@ -102,9 +108,11 @@ void WebDAVWorker::onDisconnected()
     if (timer) {
         timer->stop();
         timer->deleteLater();
+        socket->setProperty("timeoutTimer", QVariant()); // очищаем
     }
     if (clients.contains(socket)) {
         ClientState &state = clients[socket];
+        // Удаляем только недокачанные файлы
         if (state.putFile && !state.uploadCompleted) {
             QString filePath = state.putFile->fileName();
             state.putFile->close();
@@ -121,14 +129,7 @@ void WebDAVWorker::onDisconnected()
             QFile::remove(filePath);
             emit appendLog(QString("Removed incomplete chunked PUT file: %1").arg(filePath));
         }
-        if (state.uploadFile) {
-            state.uploadFile->close();
-            delete state.uploadFile;
-        }
-        if (state.putFile) {
-            state.putFile->close();
-            delete state.putFile;
-        }
+        // Безусловные блоки удалены — двойного удаления не будет
         clients.remove(socket);
     }
     emit appendLog("Client disconnected");
@@ -197,7 +198,7 @@ void WebDAVWorker::onReadyRead()
             QByteArray value = trimmed.mid(colonPos + 1).trimmed();
             if (name == "content-length") {
                 contentLength = value.toInt();
-            } else if (name == "expect" && value.toLower().contains("100-continue")) {
+            } else if (name == "expect" && value.toLower() == "100-continue") {
                 expectContinue = true;
             } else if (name == "transfer-encoding") {
                 QList<QByteArray> encodings = value.split(',');

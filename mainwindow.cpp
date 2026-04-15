@@ -16,8 +16,8 @@ MainWindow::MainWindow(QWidget *parent)
 {
     setupUI();
     webdavServer = new WebDAVServer(this, this);
-    // Подключаем сигнал сервера к нашему слоту
     connect(webdavServer, &WebDAVServer::appendLog, this, &MainWindow::appendLog);
+    connect(webdavServer, &WebDAVServer::serverStarted, this, &MainWindow::onServerStarted);
     appendLog("Приложение запущено. Добро пожаловать в Better WebDAV Server!");
 }
 
@@ -83,13 +83,8 @@ void MainWindow::startServer()
         appendLog("Ошибка: Сервер не инициализирован.");
         return;
     }
-
-    if (webdavServer->startServer(8080)) {
-        startButton->setEnabled(false);
-        stopButton->setEnabled(true);
-    } else {
-        appendLog("Не удалось запустить WebDAV сервер.");
-    }
+    // Не меняем состояние кнопок здесь – ждём сигнала serverStarted
+    webdavServer->startServer(8080);
 }
 
 void MainWindow::stopServer()
@@ -99,6 +94,7 @@ void MainWindow::stopServer()
     }
     startButton->setEnabled(true);
     stopButton->setEnabled(false);
+    appendLog("Сервер остановлен.");
 }
 
 void MainWindow::exitApplication()
@@ -111,6 +107,19 @@ void MainWindow::appendLog(const QString &message)
 {
     QString logEntry = QString("[%1] %2").arg(getCurrentTimestamp(), message);
     logArea->appendPlainText(logEntry);
+}
+
+void MainWindow::onServerStarted(bool success)
+{
+    if (success) {
+        startButton->setEnabled(false);
+        stopButton->setEnabled(true);
+        appendLog("Сервер успешно запущен.");
+    } else {
+        startButton->setEnabled(true);
+        stopButton->setEnabled(false);
+        appendLog("Ошибка запуска сервера (возможно, порт занят).");
+    }
 }
 
 QString MainWindow::getCurrentTimestamp() const

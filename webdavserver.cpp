@@ -2,10 +2,12 @@
 #include "webdavworker.h"
 #include "mainwindow.h"
 
+#include <QThread>
+#include <QMetaObject>
+
 WebDAVServer::WebDAVServer(MainWindow *mw, QObject *parent)
     : QObject(parent), worker(nullptr), mainWindow(mw)
 {
-    // Воркер создадим при старте
 }
 
 WebDAVServer::~WebDAVServer()
@@ -15,15 +17,16 @@ WebDAVServer::~WebDAVServer()
 
 bool WebDAVServer::startServer(quint16 port)
 {
-    if (worker) return true; // уже запущен
+    if (worker) return true;
 
     worker = new WebDAVWorker(mainWindow, port);
     worker->moveToThread(&workerThread);
 
-    // Подключаем сигналы
     connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
     connect(worker, &WebDAVWorker::appendLog, this, &WebDAVServer::appendLog);
-    // Запускаем сервер при старте потока
+    connect(worker, &WebDAVWorker::started, this, [this](bool success) {
+        emit serverStarted(success);
+    });
     connect(&workerThread, &QThread::started, worker, &WebDAVWorker::start);
 
     workerThread.start();
@@ -34,7 +37,8 @@ void WebDAVServer::stopServer()
 {
     if (!worker) return;
 
-    worker->stop();
+    QMetaObject::invokeMethod(worker, "stop", Qt::BlockingQueuedConnection);
+
     workerThread.quit();
     workerThread.wait();
     worker = nullptr;

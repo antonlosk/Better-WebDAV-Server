@@ -1,4 +1,3 @@
-// mainwindow.h
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -22,12 +21,13 @@ public:
     ~MainWindow();
 
 public slots:
-    void appendLog(const QString &message);  // слот для приёма логов
+    void appendLog(const QString &message);
 
 private slots:
     void startServer();
     void stopServer();
     void exitApplication();
+    void onServerStarted(bool success);   // новый слот
 
 private:
     void setupUI();

@@ -26,6 +26,7 @@ public slots:
 signals:
     void appendLog(const QString &message);
     void finished();
+    void started(bool success);   // новый сигнал
 
 private slots:
     void onNewConnection();

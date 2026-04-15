@@ -142,7 +142,19 @@ void WebDAVXmlBuilder::sendStreamResponse(QTcpSocket *socket,
     while (!file->atEnd()) {
         qint64 bytesRead = file->read(buffer.data(), chunkSize);
         if (bytesRead <= 0) break;
-        socket->write(buffer.constData(), bytesRead);
+        qint64 written = 0;
+        while (written < bytesRead) {
+            qint64 ret = socket->write(buffer.constData() + written, bytesRead - written);
+            if (ret < 0) {
+                file->close();
+                return;
+            }
+            written += ret;
+            if (!socket->waitForBytesWritten(1000)) {
+                file->close();
+                return;
+            }
+        }
         if (socket->state() != QAbstractSocket::ConnectedState) break;
     }
     socket->flush();
