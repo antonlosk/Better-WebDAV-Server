@@ -1,168 +1,126 @@
 #include "mainwindow.h"
 #include "webdavserver.h"
 
-#include <QToolBar>
-#include <QLabel>
-#include <QPushButton>
-#include <QToolButton>
-#include <QMenu>
-#include <QDateTime>
-#include <QVBoxLayout>
-#include <QWidget>
-#include <QApplication>
 #include <QFileDialog>
-#include <QSettings>
-#include <QDir>
+#include <QDateTime>
+#include <QMenu>
+#include <QMenuBar>
+#include <QStatusBar>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QApplication>
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), webdavServer(nullptr), settings("MyCompany", "BetterWebDAV")
+    : QMainWindow(parent)
+    , m_server(nullptr)
 {
-    loadSettings();
-    setupUI();
-    webdavServer = new WebDAVServer(this, rootPath, this);
-    connect(webdavServer, &WebDAVServer::appendLog, this, &MainWindow::appendLog);
-    connect(webdavServer, &WebDAVServer::serverStarted, this, &MainWindow::onServerStarted);
-    appendLog("Приложение запущено. Добро пожаловать в Better WebDAV Server!");
+    setupUi();
+
+    // Настройка меню "..." в правом верхнем углу
+    QMenu *menu = new QMenu(this);
+    QAction *exitAction = menu->addAction("Exit");
+    connect(exitAction, &QAction::triggered, this, &MainWindow::onExitActionTriggered);
+    m_menuButton->setMenu(menu);
+    m_menuButton->setPopupMode(QToolButton::InstantPopup);
+
+    // Начальные значения
+    m_pathLineEdit->setText("C:/");
+    m_startStopButton->setText("Start");
+
+    // Подключаем сигналы
+    connect(m_browseButton, &QPushButton::clicked, this, &MainWindow::onBrowseButtonClicked);
+    connect(m_startStopButton, &QPushButton::clicked, this, &MainWindow::onStartStopButtonClicked);
+
+    // Создаём сервер
+    m_server = new WebDavServer(this);
+    connect(m_server, &WebDavServer::stateChanged, this, &MainWindow::onServerStateChanged);
+    connect(m_server, &WebDavServer::logMessage, this, &MainWindow::logMessage);
 }
 
 MainWindow::~MainWindow()
 {
-    saveSettings();
-    if (webdavServer) {
-        webdavServer->stopServer();
-        delete webdavServer;
-    }
 }
 
-void MainWindow::setupUI()
+void MainWindow::setupUi()
 {
+    // Центральный виджет и основной layout
+    QWidget *central = new QWidget(this);
+    QVBoxLayout *mainLayout = new QVBoxLayout(central);
+
+    // Верхняя панель (тулбар)
+    QHBoxLayout *topLayout = new QHBoxLayout();
+
+    QLabel *pathLabel = new QLabel("Корневая папка:");
+    topLayout->addWidget(pathLabel);
+
+    m_pathLineEdit = new QLineEdit();
+    topLayout->addWidget(m_pathLineEdit);
+
+    m_browseButton = new QPushButton("Обзор...");
+    topLayout->addWidget(m_browseButton);
+
+    m_startStopButton = new QPushButton("Start");
+    topLayout->addWidget(m_startStopButton);
+
+    topLayout->addStretch();
+
+    m_menuButton = new QToolButton();
+    m_menuButton->setText("...");
+    topLayout->addWidget(m_menuButton);
+
+    mainLayout->addLayout(topLayout);
+
+    // Область логов
+    m_logTextEdit = new QTextEdit();
+    m_logTextEdit->setReadOnly(true);
+    mainLayout->addWidget(m_logTextEdit);
+
+    setCentralWidget(central);
+
+    // Окно
     setWindowTitle("Better WebDAV Server");
-
-    topToolBar = new QToolBar("Верхний тулбар", this);
-    topToolBar->setMovable(false);
-    addToolBar(Qt::TopToolBarArea, topToolBar);
-
-    pathLabel = new QLabel("Путь: " + rootPath, this);
-
-    QPushButton *browseButton = new QPushButton("Обзор", this);
-    connect(browseButton, &QPushButton::clicked, this, &MainWindow::chooseRootFolder);
-
-    startButton = new QPushButton("Start", this);
-    stopButton = new QPushButton("Stop", this);
-    stopButton->setEnabled(false);
-
-    menuButton = new QToolButton(this);
-    menuButton->setText("...");
-    QMenu *menu = new QMenu(this);
-    QAction *exitAction = new QAction("Exit", this);
-    connect(exitAction, &QAction::triggered, this, &MainWindow::exitApplication);
-    menu->addAction(exitAction);
-    menuButton->setMenu(menu);
-    menuButton->setPopupMode(QToolButton::InstantPopup);
-
-    topToolBar->addWidget(pathLabel);
-    topToolBar->addWidget(browseButton);
-    topToolBar->addWidget(startButton);
-    topToolBar->addWidget(stopButton);
-
-    QWidget *spacer = new QWidget(this);
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    topToolBar->addWidget(spacer);
-    topToolBar->addWidget(menuButton);
-
-    connect(startButton, &QPushButton::clicked, this, &MainWindow::startServer);
-    connect(stopButton, &QPushButton::clicked, this, &MainWindow::stopServer);
-
-    bottomToolBar = new QToolBar("Нижний тулбар", this);
-    bottomToolBar->setMovable(false);
-    addToolBar(Qt::BottomToolBarArea, bottomToolBar);
-    QLabel *statusLabel = new QLabel("Готов", this);
-    bottomToolBar->addWidget(statusLabel);
-
-    logArea = new QPlainTextEdit(this);
-    logArea->setReadOnly(true);
-    logArea->setMaximumBlockCount(1000);
-    setCentralWidget(logArea);
-
     resize(800, 600);
+
+    // Меню и статусбар (пустые, но могут пригодиться)
+    menuBar();
+    statusBar();
 }
 
-void MainWindow::startServer()
+void MainWindow::onBrowseButtonClicked()
 {
-    if (!webdavServer) {
-        appendLog("Ошибка: Сервер не инициализирован.");
-        return;
-    }
-    webdavServer->startServer(8080);
-}
-
-void MainWindow::stopServer()
-{
-    if (webdavServer) {
-        webdavServer->stopServer();
-    }
-    startButton->setEnabled(true);
-    stopButton->setEnabled(false);
-    appendLog("Сервер остановлен.");
-}
-
-void MainWindow::exitApplication()
-{
-    appendLog("Выход из приложения.");
-    QApplication::quit();
-}
-
-void MainWindow::appendLog(const QString &message)
-{
-    QString logEntry = QString("[%1] %2").arg(getCurrentTimestamp(), message);
-    logArea->appendPlainText(logEntry);
-}
-
-void MainWindow::onServerStarted(bool success)
-{
-    if (success) {
-        startButton->setEnabled(false);
-        stopButton->setEnabled(true);
-        appendLog("Сервер успешно запущен.");
-    } else {
-        startButton->setEnabled(true);
-        stopButton->setEnabled(false);
-        appendLog("Ошибка запуска сервера (возможно, порт занят).");
-    }
-}
-
-void MainWindow::chooseRootFolder()
-{
-    QString dir = QFileDialog::getExistingDirectory(this, "Выберите корневую папку WebDAV",
-                                                    rootPath,
-                                                    QFileDialog::ShowDirsOnly);
+    QString dir = QFileDialog::getExistingDirectory(this, "Выбор корневой папки", m_pathLineEdit->text());
     if (!dir.isEmpty()) {
-        rootPath = QDir::toNativeSeparators(dir);
-        if (!rootPath.endsWith(QDir::separator()))
-            rootPath += QDir::separator();
-        pathLabel->setText("Путь: " + rootPath);
-        saveSettings();
-        appendLog("Корневая папка изменена на: " + rootPath);
-        if (webdavServer && stopButton->isEnabled()) {
-            stopServer();
-            startServer();
-        }
+        m_pathLineEdit->setText(dir);
     }
 }
 
-QString MainWindow::getCurrentTimestamp() const
+void MainWindow::onStartStopButtonClicked()
 {
-    return QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
+    if (m_server->isRunning()) {
+        m_server->stop();
+    } else {
+        m_server->start(m_pathLineEdit->text());
+    }
 }
 
-void MainWindow::loadSettings()
+void MainWindow::onServerStateChanged(bool isRunning)
 {
-    rootPath = settings.value("rootPath", "C:/").toString();
-    if (!rootPath.endsWith('/') && !rootPath.endsWith('\\'))
-        rootPath += '/';
+    m_startStopButton->setText(isRunning ? "Stop" : "Start");
+    m_pathLineEdit->setEnabled(!isRunning);
+    m_browseButton->setEnabled(!isRunning);
+
+    QString state = isRunning ? "запущен" : "остановлен";
+    logMessage(QString("Сервер %1").arg(state));
 }
 
-void MainWindow::saveSettings()
+void MainWindow::logMessage(const QString &message)
 {
-    settings.setValue("rootPath", rootPath);
+    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
+    m_logTextEdit->append(QString("[%1] %2").arg(timestamp, message));
+}
+
+void MainWindow::onExitActionTriggered()
+{
+    QApplication::quit();
 }

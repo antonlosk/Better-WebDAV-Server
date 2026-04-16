@@ -1,45 +1,49 @@
 #include "webdavserver.h"
-#include "webdavworker.h"
-#include "mainwindow.h"
+#include "webdavclienthandler.h"
 
-#include <QThread>
-#include <QMetaObject>
-
-WebDAVServer::WebDAVServer(MainWindow *mw, const QString &rootPath, QObject *parent)
-    : QObject(parent), worker(nullptr), mainWindow(mw), rootPath(rootPath)
+WebDavServer::WebDavServer(QObject *parent) : QTcpServer(parent), m_isRunning(false)
 {
 }
 
-WebDAVServer::~WebDAVServer()
+void WebDavServer::start(const QString &rootPath)
 {
-    stopServer();
+    m_rootPath = rootPath;
+    if (!this->listen(QHostAddress::Any, 8080)) {
+        emit logMessage(QString("Ошибка запуска сервера: %1").arg(this->errorString()));
+        return;
+    }
+    m_isRunning = true;
+    emit stateChanged(true);
+    emit logMessage(QString("Сервер запущен на порту %1, корневая папка: %2").arg(this->serverPort()).arg(rootPath));
 }
 
-bool WebDAVServer::startServer(quint16 port)
+void WebDavServer::stop()
 {
-    if (worker) return true;
-
-    worker = new WebDAVWorker(mainWindow, port, rootPath);
-    worker->moveToThread(&workerThread);
-
-    connect(&workerThread, &QThread::finished, worker, &QObject::deleteLater);
-    connect(worker, &WebDAVWorker::appendLog, this, &WebDAVServer::appendLog);
-    connect(worker, &WebDAVWorker::started, this, [this](bool success) {
-        emit serverStarted(success);
-    });
-    connect(&workerThread, &QThread::started, worker, &WebDAVWorker::start);
-
-    workerThread.start();
-    return true;
+    this->close();
+    m_isRunning = false;
+    emit stateChanged(false);
 }
 
-void WebDAVServer::stopServer()
+bool WebDavServer::isRunning() const
 {
-    if (!worker) return;
+    return m_isRunning;
+}
 
-    QMetaObject::invokeMethod(worker, "stop", Qt::BlockingQueuedConnection);
+void WebDavServer::incomingConnection(qintptr handle)
+{
+    // Создаем обработчик в новом потоке
+    QThread *thread = new QThread(this);
+    WebDavClientHandler *handler = new WebDavClientHandler(handle, m_rootPath);
+    handler->moveToThread(thread);
 
-    workerThread.quit();
-    workerThread.wait();
-    worker = nullptr;
+    // Подключаем сигналы для управления жизненным циклом потока
+    connect(thread, &QThread::started, handler, &WebDavClientHandler::run);
+    connect(handler, &WebDavClientHandler::finished, thread, &QThread::quit);
+    connect(handler, &WebDavClientHandler::finished, handler, &WebDavClientHandler::deleteLater);
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+
+    // Пробрасываем лог-сообщения
+    connect(handler, &WebDavClientHandler::logMessage, this, &WebDavServer::logMessage);
+
+    thread->start();
 }

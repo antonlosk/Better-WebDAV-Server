@@ -2,16 +2,12 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QPlainTextEdit>
-#include <QSettings>
-#include "webdavserver.h"
+#include <QLineEdit>
+#include <QPushButton>
+#include <QTextEdit>
+#include <QToolButton>
 
-QT_BEGIN_NAMESPACE
-class QLabel;
-class QPushButton;
-class QToolButton;
-class QToolBar;
-QT_END_NAMESPACE
+class WebDavServer;
 
 class MainWindow : public QMainWindow
 {
@@ -21,33 +17,23 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-public slots:
-    void appendLog(const QString &message);
-
 private slots:
-    void startServer();
-    void stopServer();
-    void exitApplication();
-    void onServerStarted(bool success);
-    void chooseRootFolder();
+    void onBrowseButtonClicked();
+    void onStartStopButtonClicked();
+    void onExitActionTriggered();
+    void onServerStateChanged(bool isRunning);
+    void logMessage(const QString &message);
 
 private:
-    void setupUI();
-    QString getCurrentTimestamp() const;
-    void loadSettings();
-    void saveSettings();
+    void setupUi();
 
-    QPlainTextEdit *logArea;
-    QLabel *pathLabel;
-    QPushButton *startButton;
-    QPushButton *stopButton;
-    QToolButton *menuButton;
-    QToolBar *topToolBar;
-    QToolBar *bottomToolBar;
+    QLineEdit *m_pathLineEdit;
+    QPushButton *m_browseButton;
+    QPushButton *m_startStopButton;
+    QToolButton *m_menuButton;
+    QTextEdit *m_logTextEdit;
 
-    WebDAVServer *webdavServer;
-    QString rootPath;
-    QSettings settings;
+    WebDavServer *m_server;
 };
 
 #endif // MAINWINDOW_H

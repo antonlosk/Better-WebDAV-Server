@@ -3,40 +3,29 @@
 
 #include <QByteArray>
 #include <QString>
-#include <QFile>
-#include <QTcpSocket>
-#include <QMap>
+#include <QFileInfo>
+#include <QXmlStreamWriter>
 
-class WebDAVXmlBuilder
+class WebDavXmlBuilder
 {
 public:
+    // Генерация ответа на PROPFIND для одного ресурса или коллекции
     static QByteArray buildPropfindResponse(const QString &path,
-                                            const QString &localPath,
-                                            int depth);
+                                            const QFileInfo &fileInfo,
+                                            const QList<QFileInfo> &children,
+                                            const QString &mimeType);
 
-    static void sendResponse(QTcpSocket *socket,
-                             int statusCode,
-                             const QByteArray &contentType,
-                             const QByteArray &body,
-                             const QMap<QByteArray, QByteArray> &extraHeaders = {});
+    // Генерация ответа на OPTIONS (объявление возможностей сервера)
+    static QByteArray buildOptionsResponse();
 
-    static void sendStreamResponse(QTcpSocket *socket,
-                                   int statusCode,
-                                   const QByteArray &contentType,
-                                   QFile *file,
-                                   qint64 startByte,
-                                   qint64 endByte,
-                                   qint64 totalSize,
-                                   const QMap<QByteArray, QByteArray> &extraHeaders = {});
+    // Генерация ответа с ошибкой в формате Multi-Status
+    static QByteArray buildErrorResponse(const QString &path, int statusCode, const QString &message = {});
 
-    static void sendHeadersOnly(QTcpSocket *socket,
-                                int statusCode,
-                                const QByteArray &contentType,
-                                qint64 contentLength,
-                                const QMap<QByteArray, QByteArray> &extraHeaders = {});
+    // Генерация тела для успешного ответа LOCK (пока упрощённо)
+    static QByteArray buildLockResponse(const QString &path, const QString &lockToken);
 
 private:
-    static QByteArray statusText(int statusCode);
+    static void writePropertyElement(QXmlStreamWriter &xml, const QFileInfo &fileInfo, const QString &mimeType);
 };
 
 #endif // WEBDAVXMLBUILDER_H

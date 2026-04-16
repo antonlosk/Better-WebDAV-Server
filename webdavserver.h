@@ -1,31 +1,29 @@
 #ifndef WEBDAVSERVER_H
 #define WEBDAVSERVER_H
 
-#include <QObject>
+#include <QTcpServer>
 #include <QThread>
 
-class MainWindow;
-class WebDAVWorker;
-
-class WebDAVServer : public QObject
+class WebDavServer : public QTcpServer
 {
     Q_OBJECT
 public:
-    explicit WebDAVServer(MainWindow *mainWindow, const QString &rootPath, QObject *parent = nullptr);
-    ~WebDAVServer();
+    explicit WebDavServer(QObject *parent = nullptr);
 
-    bool startServer(quint16 port);
-    void stopServer();
+    void start(const QString &rootPath);
+    void stop();
+    bool isRunning() const;
 
 signals:
-    void appendLog(const QString &message);
-    void serverStarted(bool success);
+    void stateChanged(bool isRunning);
+    void logMessage(const QString &message);
+
+protected:
+    void incomingConnection(qintptr handle) override;
 
 private:
-    QThread workerThread;
-    WebDAVWorker *worker;
-    MainWindow *mainWindow;
-    QString rootPath;
+    QString m_rootPath;
+    bool m_isRunning;
 };
 
 #endif // WEBDAVSERVER_H
