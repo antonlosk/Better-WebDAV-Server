@@ -315,8 +315,18 @@ void WebDavClientHandler::handleGet(const QString &path)
                 if (start < 0) start = 0;
                 if (end < 0 || end >= totalSize) end = totalSize - 1;
                 if (start > end) {
-                    // Некорректный диапазон
-                    sendResponse(416);
+                    // Некорректный диапазон — отправляем 416 с заголовком Content-Range
+                    QByteArray response;
+                    QTextStream stream(&response);
+                    stream << "HTTP/1.1 416 Requested Range Not Satisfiable\r\n";
+                    stream << "Content-Range: bytes */" << totalSize << "\r\n";
+                    stream << "Content-Length: 0\r\n";
+                    stream << "Connection: " << (m_keepAlive ? "Keep-Alive" : "close") << "\r\n";
+                    stream << "\r\n";
+                    stream.flush();
+
+                    m_socket->write(response);
+                    m_socket->flush();
                     return;
                 }
 
@@ -341,7 +351,18 @@ void WebDavClientHandler::handleGet(const QString &path)
                 m_socket->write(partialContent);
                 m_socket->flush();
             } else {
-                sendResponse(416);
+                // Пустой список диапазонов — 416
+                QByteArray response;
+                QTextStream stream(&response);
+                stream << "HTTP/1.1 416 Requested Range Not Satisfiable\r\n";
+                stream << "Content-Range: bytes */" << totalSize << "\r\n";
+                stream << "Content-Length: 0\r\n";
+                stream << "Connection: " << (m_keepAlive ? "Keep-Alive" : "close") << "\r\n";
+                stream << "\r\n";
+                stream.flush();
+
+                m_socket->write(response);
+                m_socket->flush();
                 return;
             }
         } else {
