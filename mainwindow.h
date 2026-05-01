@@ -1,39 +1,63 @@
-#ifndef MAINWINDOW_H
-#define MAINWINDOW_H
+#pragma once
 
 #include <QMainWindow>
+#include <QToolBar>
+#include <QStatusBar>
+#include <QTextEdit>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QTextEdit>
+#include <QLabel>
+#include <QAction>
+#include <QMenu>
 #include <QToolButton>
+#include <QSpinBox>
+#include <QFrame>
 
-class WebDavServer;
+#include "webdavserver.h"
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
 private slots:
-    void onBrowseButtonClicked();
-    void onStartStopButtonClicked();
-    void onExitActionTriggered();
-    void onServerStateChanged(bool isRunning);
-    void logMessage(const QString &message);
+    void onBrowse();
+    void onStart();
+    void onStop();
+    void onQuit();
+    void onLogMessage(const QString &msg, const QString &level);
+    void onServerStarted(quint16 port);
+    void onServerStartFailed(const QString &reason);
+    void onServerStopped();
 
 private:
-    void setupUi();
+    void setupTopToolbar();
+    void setupLogArea();
+    void setupBottomToolbar();
+    void applyStyles();
 
-    QLineEdit *m_pathLineEdit;
-    QPushButton *m_browseButton;
-    QPushButton *m_startStopButton;
-    QToolButton *m_menuButton;
-    QTextEdit *m_logTextEdit;
+    // Top toolbar
+    QToolBar   *m_topToolbar   = nullptr;
+    QLineEdit  *m_pathEdit     = nullptr;
+    QSpinBox   *m_portSpinBox  = nullptr;
+    QPushButton *m_btnBrowse   = nullptr;
+    QPushButton *m_btnStart    = nullptr;
+    QPushButton *m_btnStop     = nullptr;
+    QToolButton *m_btnMenu     = nullptr;
 
-    WebDavServer *m_server;
+    // Log
+    QTextEdit  *m_logEdit      = nullptr;
+
+    // Bottom toolbar
+    QToolBar   *m_bottomToolbar = nullptr;
+    QLabel     *m_statusLabel   = nullptr;
+
+    // Server
+    WebDavServer *m_server = nullptr;
+
+    // State
+    bool m_serverRunning = false;
 };
-
-#endif // MAINWINDOW_H

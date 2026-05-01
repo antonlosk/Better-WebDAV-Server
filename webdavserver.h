@@ -1,29 +1,48 @@
-#ifndef WEBDAVSERVER_H
-#define WEBDAVSERVER_H
+#pragma once
 
-#include <QTcpServer>
+#include <QObject>
 #include <QThread>
+#include <QDir>
 
-class WebDavServer : public QTcpServer
+class WebDavWorker;
+
+class WebDavServer : public QObject
 {
     Q_OBJECT
+
 public:
     explicit WebDavServer(QObject *parent = nullptr);
+    ~WebDavServer();
 
-    void start(const QString &rootPath);
-    void stop();
-    bool isRunning() const;
+    bool    start(const QString &rootPath, quint16 port = 80);
+    void    stop();
+
+    bool    isRunning() const;
+    quint16 port()      const;
+    QString rootPath()  const;
 
 signals:
-    void stateChanged(bool isRunning);
-    void logMessage(const QString &message);
+    void logMessage(const QString &message, const QString &level);
+    void serverStarted(quint16 port);
+    void serverStartFailed(const QString &reason);
+    void serverStopped();
+    void clientConnected(const QString &address);
+    void clientDisconnected(const QString &address);
 
-protected:
-    void incomingConnection(qintptr handle) override;
+    void _startRequested(const QString &rootPath, quint16 port);
+    void _stopRequested();
+
+private slots:
+    void onServerStarted(quint16 port);
+    void onServerStartFailed(const QString &reason);
+    void onServerStopped();
 
 private:
-    QString m_rootPath;
-    bool m_isRunning;
-};
+    QThread      *m_thread  = nullptr;
+    WebDavWorker *m_worker  = nullptr;
 
-#endif // WEBDAVSERVER_H
+    bool    m_running  = false;
+    bool    m_startPending = false;
+    quint16 m_port     = 80;
+    QString m_rootPath;
+};

@@ -1,49 +1,126 @@
 #include "webdavserver.h"
-#include "webdavclienthandler.h"
+#include "webdavworker.h"
+#include <QDir>
+#include <QTcpServer>
 
-WebDavServer::WebDavServer(QObject *parent) : QTcpServer(parent), m_isRunning(false)
+// ─────────────────────────────────────────────────────────────────────────────
+WebDavServer::WebDavServer(QObject *parent)
+    : QObject(parent)
+    , m_thread(new QThread(this))
+    , m_worker(new WebDavWorker)
 {
+    m_worker->moveToThread(m_thread);
+
+    connect(m_thread, &QThread::finished,
+            m_worker, &QObject::deleteLater);
+
+    connect(m_worker, &WebDavWorker::logMessage,
+            this,     &WebDavServer::logMessage,
+            Qt::QueuedConnection);
+
+    connect(m_worker, &WebDavWorker::serverStarted,
+            this,     &WebDavServer::onServerStarted,
+            Qt::QueuedConnection);
+    connect(m_worker, &WebDavWorker::serverStartFailed,
+            this,     &WebDavServer::onServerStartFailed,
+            Qt::QueuedConnection);
+
+    connect(m_worker, &WebDavWorker::serverStopped,
+            this,     &WebDavServer::onServerStopped,
+            Qt::QueuedConnection);
+
+    connect(m_worker, &WebDavWorker::clientConnected,
+            this,     &WebDavServer::clientConnected,
+            Qt::QueuedConnection);
+
+    connect(m_worker, &WebDavWorker::clientDisconnected,
+            this,     &WebDavServer::clientDisconnected,
+            Qt::QueuedConnection);
+
+    connect(this,     &WebDavServer::_startRequested,
+            m_worker, &WebDavWorker::startServer,
+            Qt::QueuedConnection);
+
+    connect(this,     &WebDavServer::_stopRequested,
+            m_worker, &WebDavWorker::stopServer,
+            Qt::QueuedConnection);
+
+    m_thread->setObjectName("WebDAV-Worker");
+    m_thread->start();
 }
 
-void WebDavServer::start(const QString &rootPath)
+// ─────────────────────────────────────────────────────────────────────────────
+WebDavServer::~WebDavServer()
 {
-    m_rootPath = rootPath;
-    if (!this->listen(QHostAddress::Any, 8080)) {
-        emit logMessage(QString("Ошибка запуска сервера: %1").arg(this->errorString()));
-        return;
+    emit _stopRequested();
+    m_thread->quit();
+    m_thread->wait();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+bool WebDavServer::start(const QString &rootPath, quint16 port)
+{
+    if (m_running) {
+        emit logMessage("Server is already running.", "WARN");
+        return false;
     }
-    m_isRunning = true;
-    emit stateChanged(true);
-    emit logMessage(QString("Сервер запущен на порту %1, корневая папка: %2").arg(this->serverPort()).arg(rootPath));
+    if (m_startPending) {
+        emit logMessage("Server is already starting.", "WARN");
+        return false;
+    }
+    if (!QDir(rootPath).exists()) {
+        emit logMessage("Directory does not exist: " + rootPath, "ERROR");
+        emit serverStartFailed("Directory does not exist: " + rootPath);
+        return false;
+    }
+
+    // Fast synchronous port probe to avoid false success.
+    QTcpServer probe;
+    if (!probe.listen(QHostAddress::Any, port)) {
+        const QString reason = "Failed to start server: " + probe.errorString();
+        emit logMessage(reason, "ERROR");
+        emit serverStartFailed(reason);
+        return false;
+    }
+    probe.close();
+
+    m_rootPath = rootPath;
+    m_port     = port;
+    m_startPending = true;
+    emit _startRequested(rootPath, port);
+    return true;
 }
 
 void WebDavServer::stop()
 {
-    this->close();
-    m_isRunning = false;
-    emit stateChanged(false);
+    m_startPending = false;
+    emit _stopRequested();
 }
 
-bool WebDavServer::isRunning() const
+// ─────────────────────────────────────────────────────────────────────────────
+bool    WebDavServer::isRunning() const { return m_running;  }
+quint16 WebDavServer::port()      const { return m_port;     }
+QString WebDavServer::rootPath()  const { return m_rootPath; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+void WebDavServer::onServerStarted(quint16 port)
 {
-    return m_isRunning;
+    m_running = true;
+    m_startPending = false;
+    m_port    = port;
+    emit serverStarted(port);
 }
 
-void WebDavServer::incomingConnection(qintptr handle)
+void WebDavServer::onServerStartFailed(const QString &reason)
 {
-    // Создаем обработчик в новом потоке
-    QThread *thread = new QThread(this);
-    WebDavClientHandler *handler = new WebDavClientHandler(handle, m_rootPath);
-    handler->moveToThread(thread);
+    m_running = false;
+    m_startPending = false;
+    emit serverStartFailed(reason);
+}
 
-    // Подключаем сигналы для управления жизненным циклом потока
-    connect(thread, &QThread::started, handler, &WebDavClientHandler::run);
-    connect(handler, &WebDavClientHandler::finished, thread, &QThread::quit);
-    connect(handler, &WebDavClientHandler::finished, handler, &WebDavClientHandler::deleteLater);
-    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
-
-    // Пробрасываем лог-сообщения
-    connect(handler, &WebDavClientHandler::logMessage, this, &WebDavServer::logMessage);
-
-    thread->start();
+void WebDavServer::onServerStopped()
+{
+    m_running = false;
+    m_startPending = false;
+    emit serverStopped();
 }
