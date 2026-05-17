@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include <QApplication>
 #include <QStyleFactory>
+#include <QPalette>
 
 int main(int argc, char *argv[])
 {
@@ -10,28 +11,28 @@ int main(int argc, char *argv[])
     app.setApplicationVersion("1.0.0");
     app.setOrganizationName("BetterWebDAV");
 
-    // Use Fusion style for a modern look
+    // Используем Fusion как основу
     app.setStyle(QStyleFactory::create("Fusion"));
 
-    // Dark color palette
-    QPalette darkPalette;
-    darkPalette.setColor(QPalette::Window,          QColor(30, 30, 30));
-    darkPalette.setColor(QPalette::WindowText,       QColor(220, 220, 220));
-    darkPalette.setColor(QPalette::Base,             QColor(20, 20, 20));
-    darkPalette.setColor(QPalette::AlternateBase,    QColor(40, 40, 40));
-    darkPalette.setColor(QPalette::ToolTipBase,      QColor(50, 50, 50));
-    darkPalette.setColor(QPalette::ToolTipText,      QColor(220, 220, 220));
-    darkPalette.setColor(QPalette::Text,             QColor(220, 220, 220));
-    darkPalette.setColor(QPalette::Button,           QColor(50, 50, 50));
-    darkPalette.setColor(QPalette::ButtonText,       QColor(220, 220, 220));
-    darkPalette.setColor(QPalette::BrightText,       Qt::red);
-    darkPalette.setColor(QPalette::Link,             QColor(42, 130, 218));
-    darkPalette.setColor(QPalette::Highlight,        QColor(42, 130, 218));
-    darkPalette.setColor(QPalette::HighlightedText,  Qt::black);
-    darkPalette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(100, 100, 100));
-    darkPalette.setColor(QPalette::Disabled, QPalette::Text,       QColor(100, 100, 100));
+    // Светлая палитра в стиле Windows 10
+    QPalette lightPalette;
+    lightPalette.setColor(QPalette::Window,          QColor(245, 245, 245));
+    lightPalette.setColor(QPalette::WindowText,       Qt::black);
+    lightPalette.setColor(QPalette::Base,             Qt::white);
+    lightPalette.setColor(QPalette::AlternateBase,    QColor(245, 245, 245));
+    lightPalette.setColor(QPalette::ToolTipBase,      Qt::white);
+    lightPalette.setColor(QPalette::ToolTipText,      Qt::black);
+    lightPalette.setColor(QPalette::Text,             Qt::black);
+    lightPalette.setColor(QPalette::Button,           QColor(240, 240, 240));
+    lightPalette.setColor(QPalette::ButtonText,       Qt::black);
+    lightPalette.setColor(QPalette::BrightText,       Qt::red);
+    lightPalette.setColor(QPalette::Link,             QColor(0, 120, 212));
+    lightPalette.setColor(QPalette::Highlight,        QColor(0, 120, 212));
+    lightPalette.setColor(QPalette::HighlightedText,  Qt::white);
+    lightPalette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(160, 160, 160));
+    lightPalette.setColor(QPalette::Disabled, QPalette::Text,       QColor(160, 160, 160));
 
-    app.setPalette(darkPalette);
+    app.setPalette(lightPalette);
 
     MainWindow w;
     w.show();

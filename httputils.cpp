@@ -1,4 +1,5 @@
 #include "httputils.h"
+#include "webdavworker.h"   // for addBytesSent
 
 #include <QMimeDatabase>
 #include <QMimeType>
@@ -7,7 +8,6 @@
 namespace HttpUtils
 {
 
-// ─────────────────────────────────────────────────────────────────────────────
 QString formatDate(const QDateTime &dt)
 {
     static const char *wd[] = {"Mon","Tue","Wed","Thu","Fri","Sat","Sun"};
@@ -22,7 +22,6 @@ QString formatDate(const QDateTime &dt)
         .arg(u.time().toString("hh:mm:ss"));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 QString formatSize(qint64 size)
 {
     if (size < 1024)           return QString("%1 B").arg(size);
@@ -31,7 +30,6 @@ QString formatSize(qint64 size)
     return QString("%1 GB").arg(size / (1024LL*1024*1024));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 QString mimeType(const QString &filePath)
 {
     static QMimeDatabase db;
@@ -51,13 +49,13 @@ QString mimeType(const QString &filePath)
     return mt.name();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void sendResponse(QTcpSocket                  *socket,
                   int                          statusCode,
                   const QString               &statusText,
                   const QMap<QString,QString> &headers,
                   const QByteArray            &body,
-                  bool                         keepAlive)
+                  bool                         keepAlive,
+                  WebDavWorker                *worker)
 {
     if (!socket || !socket->isOpen()) return;
 
@@ -81,15 +79,18 @@ void sendResponse(QTcpSocket                  *socket,
     socket->write(resp);
     socket->flush();
 
+    if (worker)
+        worker->addBytesSent(resp.size());
+
     if (!keepAlive)
         socket->disconnectFromHost();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void sendError(QTcpSocket    *socket,
                int            code,
                const QString &text,
-               bool           keepAlive)
+               bool           keepAlive,
+               WebDavWorker  *worker)
 {
     if (!socket || !socket->isOpen()) return;
 
@@ -105,7 +106,7 @@ void sendError(QTcpSocket    *socket,
     h["Content-Type"]   = "application/xml; charset=utf-8";
     h["Content-Length"] = QString::number(body.size());
 
-    sendResponse(socket, code, text, h, body, keepAlive);
+    sendResponse(socket, code, text, h, body, keepAlive, worker);
 }
 
 } // namespace HttpUtils

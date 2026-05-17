@@ -9,6 +9,19 @@
 #include <QDateTime>
 #include <QScrollBar>
 #include <QSizePolicy>
+#include <QDir>
+#include <QFont>
+#include <QChart>
+#include <QDateTimeAxis>
+#include <QValueAxis>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <psapi.h>
+#else
+#include <QFile>
+#include <QTextStream>
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 MainWindow::MainWindow(QWidget *parent)
@@ -30,9 +43,27 @@ MainWindow::MainWindow(QWidget *parent)
             this,     &MainWindow::onServerStopped);
 
     setupTopToolbar();
-    setupLogArea();
+    setupLogPage();
+    setupDashboardPage();
     setupBottomToolbar();
     applyStyles();
+
+    // Global font
+    QFont appFont = QApplication::font();
+    appFont.setFamily("Segoe UI");
+    appFont.setPointSize(9);
+    QApplication::setFont(appFont);
+
+    // Stacked widget (dashboard / log)
+    m_stack = new QStackedWidget(this);
+    m_stack->addWidget(m_dashboardPage);   // index 0
+    m_stack->addWidget(m_logEdit);         // index 1
+    setCentralWidget(m_stack);
+    m_stack->setCurrentIndex(0); // show dashboard by default
+
+    // Dashboard update timer (1 sec)
+    m_dashboardTimer = new QTimer(this);
+    connect(m_dashboardTimer, &QTimer::timeout, this, &MainWindow::updateDashboard);
 
     onLogMessage("Better WebDAV Server is ready.", "INFO");
     onLogMessage("Set a root directory and click Start.", "INFO");
@@ -49,6 +80,25 @@ void MainWindow::setupTopToolbar()
     m_topToolbar->setFloatable(false);
     m_topToolbar->setIconSize(QSize(18, 18));
     addToolBar(Qt::TopToolBarArea, m_topToolbar);
+
+    // ── Burger menu button (☰) ────────────────────────────────────────────────
+    m_burgerButton = new QToolButton(this);
+    m_burgerButton->setObjectName("burgerButton");
+    m_burgerButton->setText("\u2630"); // ☰
+    m_burgerButton->setToolTip("Menu");
+    m_burgerButton->setFixedSize(36, 30);
+    m_burgerButton->setCursor(Qt::PointingHandCursor);
+    m_burgerButton->setPopupMode(QToolButton::InstantPopup);
+
+    QMenu *burgerMenu = new QMenu(m_burgerButton);
+    burgerMenu->setObjectName("burgerMenu");
+
+    QAction *dashAct = burgerMenu->addAction("Dashboard");
+    QAction *logAct  = burgerMenu->addAction("Logs");
+
+    connect(dashAct, &QAction::triggered, this, &MainWindow::showDashboard);
+    connect(logAct,  &QAction::triggered, this, &MainWindow::showLogs);
+    m_burgerButton->setMenu(burgerMenu);
 
     // ── Path ─────────────────────────────────────────────────────────────────
     QLabel *pathIcon = new QLabel("  Path:", this);
@@ -74,7 +124,7 @@ void MainWindow::setupTopToolbar()
     m_portSpinBox = new QSpinBox(this);
     m_portSpinBox->setObjectName("portSpinBox");
     m_portSpinBox->setRange(1, 65535);
-    m_portSpinBox->setValue(80);                         // default port
+    m_portSpinBox->setValue(80);
     m_portSpinBox->setFixedWidth(75);
     m_portSpinBox->setFixedHeight(30);
     m_portSpinBox->setToolTip("WebDAV server port (default 80)");
@@ -100,7 +150,7 @@ void MainWindow::setupTopToolbar()
     // ── "..." menu ────────────────────────────────────────────────────────────
     m_btnMenu = new QToolButton(this);
     m_btnMenu->setObjectName("btnMenu");
-    m_btnMenu->setText("...");
+    m_btnMenu->setText("…");
     m_btnMenu->setToolTip("Menu");
     m_btnMenu->setFixedSize(36, 30);
     m_btnMenu->setCursor(Qt::PointingHandCursor);
@@ -126,6 +176,7 @@ void MainWindow::setupTopToolbar()
     m_btnMenu->setMenu(menu);
 
     // ── Add widgets to toolbar ───────────────────────────────────────────────
+    m_topToolbar->addWidget(m_burgerButton);
     m_topToolbar->addWidget(pathIcon);
     m_topToolbar->addWidget(m_pathEdit);
     m_topToolbar->addWidget(m_btnBrowse);
@@ -145,7 +196,64 @@ void MainWindow::setupTopToolbar()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-void MainWindow::setupLogArea()
+void MainWindow::setupDashboardPage()
+{
+    m_dashboardPage = new QWidget(this);
+    QVBoxLayout *dashLayout = new QVBoxLayout(m_dashboardPage);
+    dashLayout->setContentsMargins(12, 12, 12, 12);
+    dashLayout->setSpacing(12);
+
+    // ── Memory chart ────────────────────────────────────────────────────────
+    m_memoryChart = new QChart();
+    m_memoryChart->setTitle("Memory Usage (MB)");
+
+    m_memorySeries = new QLineSeries();
+    m_memorySeries->setName("RAM");
+    m_memoryChart->addSeries(m_memorySeries);
+
+    m_memoryAxisX = new QDateTimeAxis();
+    m_memoryAxisX->setFormat("hh:mm:ss");
+    m_memoryAxisX->setTitleText("Time");
+    m_memoryChart->addAxis(m_memoryAxisX, Qt::AlignBottom);
+    m_memorySeries->attachAxis(m_memoryAxisX);
+
+    m_memoryAxisY = new QValueAxis();
+    m_memoryAxisY->setTitleText("MB");
+    m_memoryAxisY->setLabelFormat("%.1f");
+    m_memoryChart->addAxis(m_memoryAxisY, Qt::AlignLeft);
+    m_memorySeries->attachAxis(m_memoryAxisY);
+
+    m_memoryChartView = new QChartView(m_memoryChart);
+    m_memoryChartView->setRenderHint(QPainter::Antialiasing);
+    dashLayout->addWidget(m_memoryChartView);
+
+    // ── Network chart ───────────────────────────────────────────────────────
+    m_networkChart = new QChart();
+    m_networkChart->setTitle("Network Activity (MB/s)");
+
+    m_networkSeries = new QLineSeries();
+    m_networkSeries->setName("Throughput");
+    m_networkChart->addSeries(m_networkSeries);
+
+    m_networkAxisX = new QDateTimeAxis();
+    m_networkAxisX->setFormat("hh:mm:ss");
+    m_networkAxisX->setTitleText("Time");
+    m_networkChart->addAxis(m_networkAxisX, Qt::AlignBottom);
+    m_networkSeries->attachAxis(m_networkAxisX);
+
+    m_networkAxisY = new QValueAxis();
+    m_networkAxisY->setTitleText("MB/s");
+    m_networkAxisY->setLabelFormat("%.2f");
+    m_networkChart->addAxis(m_networkAxisY, Qt::AlignLeft);
+    m_networkSeries->attachAxis(m_networkAxisY);
+
+    m_networkChartView = new QChartView(m_networkChart);
+    m_networkChartView->setRenderHint(QPainter::Antialiasing);
+    dashLayout->addWidget(m_networkChartView);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void MainWindow::setupLogPage()
 {
     m_logEdit = new QTextEdit(this);
     m_logEdit->setObjectName("logEdit");
@@ -156,8 +264,6 @@ void MainWindow::setupLogArea()
     QFont f("Consolas", 10);
     f.setStyleHint(QFont::Monospace);
     m_logEdit->setFont(f);
-
-    setCentralWidget(m_logEdit);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,201 +299,324 @@ void MainWindow::setupBottomToolbar()
 void MainWindow::applyStyles()
 {
     setStyleSheet(R"(
-
 QMainWindow {
-    background-color: #1e1e1e;
+    background-color: #F3F3F3;
 }
 
 QToolBar#topToolbar {
-    background-color: #252526;
-    border-bottom: 1px solid #3c3c3c;
-    padding: 4px 6px;
-    spacing: 4px;
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #D1D1D1;
+    padding: 6px 8px;
+    spacing: 6px;
 }
 
 QToolBar#bottomToolbar {
-    background-color: #007acc;
+    background-color: #0078D4;
     border-top: none;
     padding: 0px;
     spacing: 0px;
 }
 
 QToolBar::separator {
-    background-color: #3c3c3c;
+    background-color: #D1D1D1;
     width: 1px;
-    margin: 4px 6px;
+    margin: 4px 8px;
 }
 
 QLabel#toolLabel {
-    color: #9d9d9d;
-    font-size: 12px;
+    color: #4D4D4D;
+    font-size: 9pt;
+    font-family: "Segoe UI";
 }
 
 QLineEdit#pathEdit {
-    background-color: #3c3c3c;
-    color: #d4d4d4;
-    border: 1px solid #555;
+    background-color: #FFFFFF;
+    color: #000000;
+    border: 1px solid #CCCCCC;
     border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 12px;
-    selection-background-color: #264f78;
+    padding: 4px 8px;
+    font-size: 9pt;
+    font-family: "Segoe UI";
+    selection-background-color: #0078D4;
 }
 QLineEdit#pathEdit:focus {
-    border: 1px solid #007acc;
+    border: 2px solid #0078D4;
 }
 
 QSpinBox#portSpinBox {
-    background-color: #3c3c3c;
-    color: #d4d4d4;
-    border: 1px solid #555;
+    background-color: #FFFFFF;
+    color: #000000;
+    border: 1px solid #CCCCCC;
     border-radius: 4px;
     padding: 2px 4px;
-    font-size: 12px;
+    font-size: 9pt;
+    font-family: "Segoe UI";
 }
 QSpinBox#portSpinBox::up-button,
 QSpinBox#portSpinBox::down-button {
-    background-color: #4a4a4a;
+    background-color: #E1E1E1;
     border: none;
     width: 16px;
 }
 QSpinBox#portSpinBox::up-button:hover,
 QSpinBox#portSpinBox::down-button:hover {
-    background-color: #5a5a5a;
+    background-color: #D1D1D1;
 }
 
-QPushButton#btnBrowse {
-    background-color: #3c3c3c;
-    color: #d4d4d4;
-    border: 1px solid #555;
+QPushButton {
+    background-color: #E1E1E1;
+    color: #000000;
+    border: 1px solid #CCCCCC;
     border-radius: 4px;
-    padding: 2px 12px;
-    font-size: 12px;
+    padding: 6px 14px;
+    font-size: 9pt;
+    font-family: "Segoe UI";
 }
-QPushButton#btnBrowse:hover {
-    background-color: #4a4a4a;
-    border-color: #777;
+QPushButton:hover {
+    background-color: #D1D1D1;
+    border-color: #999999;
 }
-QPushButton#btnBrowse:pressed {
-    background-color: #2a2a2a;
+QPushButton:pressed {
+    background-color: #C8C8C8;
+}
+QPushButton:disabled {
+    background-color: #F3F3F3;
+    color: #A0A0A0;
+    border-color: #E0E0E0;
 }
 
 QPushButton#btnStart {
-    background-color: #388e3c;
-    color: #ffffff;
+    background-color: #0078D4;
+    color: #FFFFFF;
     border: none;
     border-radius: 4px;
-    padding: 2px 16px;
-    font-size: 12px;
+    padding: 6px 20px;
     font-weight: bold;
 }
-QPushButton#btnStart:hover  { background-color: #43a047; }
-QPushButton#btnStart:pressed { background-color: #2e7d32; }
+QPushButton#btnStart:hover {
+    background-color: #106EBE;
+}
+QPushButton#btnStart:pressed {
+    background-color: #005A9E;
+}
 QPushButton#btnStart:disabled {
-    background-color: #2a4a2a;
-    color: #666;
+    background-color: #B3D6F0;
+    color: #6E6E6E;
 }
 
 QPushButton#btnStop {
-    background-color: #c62828;
-    color: #ffffff;
+    background-color: #E81123;
+    color: #FFFFFF;
     border: none;
     border-radius: 4px;
-    padding: 2px 16px;
-    font-size: 12px;
+    padding: 6px 20px;
     font-weight: bold;
 }
-QPushButton#btnStop:hover  { background-color: #d32f2f; }
-QPushButton#btnStop:pressed { background-color: #b71c1c; }
-QPushButton#btnStop:disabled {
-    background-color: #4a1f1f;
-    color: #666;
+QPushButton#btnStop:hover {
+    background-color: #F1707A;
 }
+QPushButton#btnStop:pressed {
+    background-color: #BF0A1A;
+}
+QPushButton#btnStop:disabled {
+    background-color: #F4B9C0;
+    color: #6E6E6E;
+}
+
+QToolButton#burgerButton {
+    background-color: transparent;
+    color: #4D4D4D;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-size: 18pt;
+    font-weight: normal;
+}
+QToolButton#burgerButton:hover {
+    background-color: #E1E1E1;
+    color: #000000;
+    border-color: #CCCCCC;
+}
+QToolButton#burgerButton:pressed {
+    background-color: #D1D1D1;
+}
+QToolButton#burgerButton::menu-indicator { image: none; }
 
 QToolButton#btnMenu {
     background-color: transparent;
-    color: #9d9d9d;
+    color: #4D4D4D;
     border: 1px solid transparent;
     border-radius: 4px;
-    font-size: 16px;
+    font-size: 14pt;
     font-weight: bold;
 }
 QToolButton#btnMenu:hover {
-    background-color: #3c3c3c;
-    color: #d4d4d4;
-    border-color: #555;
+    background-color: #E1E1E1;
+    color: #000000;
+    border-color: #CCCCCC;
 }
-QToolButton#btnMenu:pressed  { background-color: #2a2a2a; }
+QToolButton#btnMenu:pressed {
+    background-color: #D1D1D1;
+}
 QToolButton#btnMenu::menu-indicator { image: none; }
 
-QMenu#mainMenu {
-    background-color: #252526;
-    color: #d4d4d4;
-    border: 1px solid #3c3c3c;
+QMenu#mainMenu, QMenu#burgerMenu {
+    background-color: #FFFFFF;
+    color: #000000;
+    border: 1px solid #CCCCCC;
     padding: 4px 0;
 }
-QMenu#mainMenu::item {
+QMenu#mainMenu::item, QMenu#burgerMenu::item {
     padding: 6px 24px 6px 16px;
-    font-size: 12px;
+    font-size: 9pt;
+    font-family: "Segoe UI";
 }
-QMenu#mainMenu::item:selected {
-    background-color: #094771;
-    color: #ffffff;
+QMenu#mainMenu::item:selected, QMenu#burgerMenu::item:selected {
+    background-color: #0078D4;
+    color: #FFFFFF;
 }
-QMenu#mainMenu::separator {
+QMenu#mainMenu::separator, QMenu#burgerMenu::separator {
     height: 1px;
-    background: #3c3c3c;
+    background: #E1E1E1;
     margin: 3px 0;
 }
 
 QTextEdit#logEdit {
-    background-color: #0d0d0d;
-    color: #d4d4d4;
+    background-color: #FFFFFF;
+    color: #1E1E1E;
     border: none;
-    border-top: 1px solid #3c3c3c;
+    border-top: 1px solid #D1D1D1;
     padding: 6px;
-    font-family: Consolas, "Courier New", monospace;
-    font-size: 11px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 10pt;
 }
 
 QScrollBar:vertical {
-    background-color: #1e1e1e;
+    background-color: #F3F3F3;
     width: 10px;
     border: none;
 }
 QScrollBar::handle:vertical {
-    background-color: #424242;
+    background-color: #C1C1C1;
     border-radius: 5px;
     min-height: 20px;
 }
-QScrollBar::handle:vertical:hover { background-color: #555; }
+QScrollBar::handle:vertical:hover {
+    background-color: #A1A1A1;
+}
 QScrollBar::add-line:vertical,
 QScrollBar::sub-line:vertical { height: 0px; }
 
 QScrollBar:horizontal {
-    background-color: #1e1e1e;
+    background-color: #F3F3F3;
     height: 10px;
     border: none;
 }
 QScrollBar::handle:horizontal {
-    background-color: #424242;
+    background-color: #C1C1C1;
     border-radius: 5px;
     min-width: 20px;
 }
-QScrollBar::handle:horizontal:hover { background-color: #555; }
+QScrollBar::handle:horizontal:hover {
+    background-color: #A1A1A1;
+}
 QScrollBar::add-line:horizontal,
 QScrollBar::sub-line:horizontal { width: 0px; }
 
 QLabel#statusLabel {
-    color: #ffffff;
-    font-size: 11px;
+    color: #FFFFFF;
+    font-size: 9pt;
     font-weight: bold;
+    font-family: "Segoe UI";
 }
 QLabel#statusRight {
-    color: rgba(255,255,255,0.6);
-    font-size: 11px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 9pt;
+    font-family: "Segoe UI";
+}
+    )");
 }
 
-    )");
+// ─────────────────────────────────────────────────────────────────────────────
+void MainWindow::showDashboard()
+{
+    if (m_stack) m_stack->setCurrentIndex(0);
+}
+
+void MainWindow::showLogs()
+{
+    if (m_stack) m_stack->setCurrentIndex(1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void MainWindow::updateDashboard()
+{
+    // 1. Memory usage
+    qreal memMB = getProcessMemoryMB();
+    QDateTime now = QDateTime::currentDateTime();
+
+    m_memorySeries->append(now.toMSecsSinceEpoch(), memMB);
+
+    // Keep only last 60 seconds
+    qint64 cutoff = now.addSecs(-60).toMSecsSinceEpoch();
+    while (m_memorySeries->count() > 0 && m_memorySeries->at(0).x() < cutoff)
+        m_memorySeries->removePoints(0, 1);
+
+    m_memoryAxisX->setRange(now.addSecs(-60), now);
+    qreal maxMem = memMB;
+    for (int i = 0; i < m_memorySeries->count(); ++i)
+        if (m_memorySeries->at(i).y() > maxMem) maxMem = m_memorySeries->at(i).y();
+    m_memoryAxisY->setRange(0, qMax(maxMem + 10, 50.0));
+
+    // 2. Network activity
+    qint64 sent = m_server->bytesSent();
+    qint64 recv = m_server->bytesReceived();
+    qint64 total = sent + recv;
+    qreal mbps = (total - (m_lastBytesSent + m_lastBytesReceived)) / (1024.0 * 1024.0); // bytes/s -> MB/s
+    m_lastBytesSent = sent;
+    m_lastBytesReceived = recv;
+
+    m_networkSeries->append(now.toMSecsSinceEpoch(), mbps);
+    while (m_networkSeries->count() > 0 && m_networkSeries->at(0).x() < cutoff)
+        m_networkSeries->removePoints(0, 1);
+
+    m_networkAxisX->setRange(now.addSecs(-60), now);
+    qreal maxNet = mbps;
+    for (int i = 0; i < m_networkSeries->count(); ++i)
+        if (m_networkSeries->at(i).y() > maxNet) maxNet = m_networkSeries->at(i).y();
+    m_networkAxisY->setRange(0, qMax(maxNet + 1.0, 5.0));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+qint64 MainWindow::getProcessMemoryMB()
+{
+#ifdef Q_OS_WIN
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(),
+                             (PROCESS_MEMORY_COUNTERS*)&pmc,
+                             sizeof(pmc)))
+    {
+        // PrivateUsage — частный рабочий набор (то, что показывается в диспетчере задач)
+        return static_cast<qint64>(pmc.PrivateUsage / (1024 * 1024));
+    }
+    return 0;
+#else
+    QFile file("/proc/self/status");
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&file);
+        while (!in.atEnd()) {
+            QString line = in.readLine();
+            if (line.startsWith("VmRSS:")) {
+                QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (parts.size() >= 2) {
+                    bool ok;
+                    qint64 kb = parts[1].toLongLong(&ok);
+                    if (ok) return kb / 1024; // KB -> MB
+                }
+            }
+        }
+    }
+    return 0;
+#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -405,7 +634,6 @@ void MainWindow::onBrowse()
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::onStart()
 {
     QString path = m_pathEdit->text().trimmed();
@@ -418,13 +646,11 @@ void MainWindow::onStart()
     m_server->start(path, port);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::onStop()
 {
     m_server->stop();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::onQuit()
 {
     if (m_server->isRunning()) {
@@ -441,21 +667,20 @@ void MainWindow::onQuit()
     QApplication::quit();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::onLogMessage(const QString &msg, const QString &level)
 {
     QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
 
     QString color, badge;
-    if      (level == "ERROR") { color = "#f44747"; badge = "ERRO"; }
-    else if (level == "WARN" ) { color = "#ffcc02"; badge = "WARN"; }
-    else if (level == "REQ"  ) { color = "#4ec9b0"; badge = "REQ "; }
-    else                       { color = "#9cdcfe"; badge = "INFO"; }
+    if      (level == "ERROR") { color = "#E81123"; badge = "ERRO"; }
+    else if (level == "WARN" ) { color = "#FF8C00"; badge = "WARN"; }
+    else if (level == "REQ"  ) { color = "#107C10"; badge = "REQ "; }
+    else                       { color = "#0078D4"; badge = "INFO"; }
 
     QString line = QString(
-                       "<span style='color:#555555;'>%1</span> "
+                       "<span style='color:#888888;'>%1</span> "
                        "<span style='color:%2;font-weight:bold;'>[%3]</span> "
-                       "<span style='color:#d4d4d4;'>%4</span>")
+                       "<span style='color:#1E1E1E;'>%4</span>")
                        .arg(timestamp, color, badge, msg.toHtmlEscaped());
 
     m_logEdit->append(line);
@@ -464,7 +689,6 @@ void MainWindow::onLogMessage(const QString &msg, const QString &level)
     sb->setValue(sb->maximum());
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::onServerStarted(quint16 port)
 {
     m_serverRunning = true;
@@ -480,10 +704,14 @@ void MainWindow::onServerStarted(quint16 port)
             .arg(m_pathEdit->text()));
 
     m_bottomToolbar->setStyleSheet(
-        "QToolBar#bottomToolbar { background-color: #1b5e20; }");
+        "QToolBar#bottomToolbar { background-color: #107C10; }");
+
+    // Start dashboard updates
+    m_lastBytesSent = m_server->bytesSent();
+    m_lastBytesReceived = m_server->bytesReceived();
+    m_dashboardTimer->start(1000);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::onServerStartFailed(const QString &reason)
 {
     m_serverRunning = false;
@@ -495,13 +723,14 @@ void MainWindow::onServerStartFailed(const QString &reason)
 
     m_statusLabel->setText("  Server start failed");
     m_bottomToolbar->setStyleSheet(
-        "QToolBar#bottomToolbar { background-color: #7f1d1d; }");
+        "QToolBar#bottomToolbar { background-color: #E81123; }");
+
+    m_dashboardTimer->stop();
 
     if (!reason.isEmpty())
         onLogMessage(reason, "ERROR");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::onServerStopped()
 {
     m_serverRunning = false;
@@ -512,7 +741,8 @@ void MainWindow::onServerStopped()
     m_btnBrowse->setEnabled(true);
 
     m_statusLabel->setText("  Server stopped");
-
     m_bottomToolbar->setStyleSheet(
-        "QToolBar#bottomToolbar { background-color: #007acc; }");
+        "QToolBar#bottomToolbar { background-color: #0078D4; }");
+
+    m_dashboardTimer->stop();
 }

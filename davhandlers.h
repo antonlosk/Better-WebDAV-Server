@@ -9,44 +9,52 @@
 #include <QFileInfo>
 #include <QUrl>
 
-// HTTP request context
+class WebDavWorker;
+
 struct HttpRequest {
     QString               method;
     QString               path;
     QString               version;
     QMap<QString,QString> headers;
-    QByteArray            body;            // kept for non-PUT methods (small bodies)
-    QString               tempFilePath;    // path to temp file for PUT streaming
+    QByteArray            body;
+    QString               tempFilePath;
 };
 
-// Forward declaration
 class FileStreamer;
 
 namespace DavHandlers
 {
-// handleGet returns FileStreamer* when streaming starts,
-// nullptr in all other cases (directory, 304, 416, error)
 FileStreamer *handleGet(QTcpSocket *s, const HttpRequest &req,
-                        const QString &rootPath);
+                        const QString &rootPath,
+                        WebDavWorker *worker);
 
 void handleOptions (QTcpSocket *s, const HttpRequest &req,
-                   const QString &rootPath);
+                   const QString &rootPath,
+                   WebDavWorker *worker);
 void handleHead    (QTcpSocket *s, const HttpRequest &req,
-                const QString &rootPath);
+                const QString &rootPath,
+                WebDavWorker *worker);
 void handlePut     (QTcpSocket *s, const HttpRequest &req,
-               const QString &rootPath);
+               const QString &rootPath,
+               WebDavWorker *worker);
 void handleDelete  (QTcpSocket *s, const HttpRequest &req,
-                  const QString &rootPath);
+                  const QString &rootPath,
+                  WebDavWorker *worker);
 void handleMkcol   (QTcpSocket *s, const HttpRequest &req,
-                 const QString &rootPath);
+                 const QString &rootPath,
+                 WebDavWorker *worker);
 void handlePropfind(QTcpSocket *s, const HttpRequest &req,
-                    const QString &rootPath);
+                    const QString &rootPath,
+                    WebDavWorker *worker);
 void handleMove    (QTcpSocket *s, const HttpRequest &req,
-                const QString &rootPath);
+                const QString &rootPath,
+                WebDavWorker *worker);
 void handleCopy    (QTcpSocket *s, const HttpRequest &req,
-                const QString &rootPath);
+                const QString &rootPath,
+                WebDavWorker *worker);
 
 bool isKeepAlive   (const HttpRequest &req);
 void sendDirListing(QTcpSocket *s, const HttpRequest &req,
-                    const QString &localDir);
+                    const QString &localDir,
+                    WebDavWorker *worker);
 }

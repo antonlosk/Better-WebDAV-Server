@@ -3,7 +3,6 @@
 #include <QDir>
 #include <QTcpServer>
 
-// ─────────────────────────────────────────────────────────────────────────────
 WebDavServer::WebDavServer(QObject *parent)
     : QObject(parent)
     , m_thread(new QThread(this))
@@ -49,7 +48,6 @@ WebDavServer::WebDavServer(QObject *parent)
     m_thread->start();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 WebDavServer::~WebDavServer()
 {
     emit _stopRequested();
@@ -57,7 +55,6 @@ WebDavServer::~WebDavServer()
     m_thread->wait();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 bool WebDavServer::start(const QString &rootPath, quint16 port)
 {
     if (m_running) {
@@ -74,7 +71,6 @@ bool WebDavServer::start(const QString &rootPath, quint16 port)
         return false;
     }
 
-    // Fast synchronous port probe to avoid false success.
     QTcpServer probe;
     if (!probe.listen(QHostAddress::Any, port)) {
         const QString reason = "Failed to start server: " + probe.errorString();
@@ -97,12 +93,20 @@ void WebDavServer::stop()
     emit _stopRequested();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 bool    WebDavServer::isRunning() const { return m_running;  }
 quint16 WebDavServer::port()      const { return m_port;     }
 QString WebDavServer::rootPath()  const { return m_rootPath; }
 
-// ─────────────────────────────────────────────────────────────────────────────
+qint64 WebDavServer::bytesSent()
+{
+    return m_worker ? m_worker->bytesSent() : 0;
+}
+
+qint64 WebDavServer::bytesReceived()
+{
+    return m_worker ? m_worker->bytesReceived() : 0;
+}
+
 void WebDavServer::onServerStarted(quint16 port)
 {
     m_running = true;

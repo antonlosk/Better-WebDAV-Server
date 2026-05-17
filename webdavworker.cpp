@@ -6,16 +6,14 @@
 #include <QTcpSocket>
 #include <QDir>
 #include <QUrl>
+#include <QAtomicInteger>
 
 namespace {
 constexpr qint64 MAX_HEADER_BYTES      = 64 * 1024;
-// Limit for Content-Length based uploads (10 GB).
-// Chunked transfers are limited only by available disk space.
 constexpr qint64 MAX_CONTENT_LENGTH     = 10LL * 1024 * 1024 * 1024;
 constexpr int    MAX_QUEUED_REQUESTS   = 256;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 WebDavWorker::WebDavWorker(QObject *parent)
     : QObject(parent)
 {}
@@ -25,7 +23,14 @@ WebDavWorker::~WebDavWorker()
     stopServer();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+void WebDavWorker::addBytesSent(qint64 bytes) {
+    m_bytesSent.fetchAndAddRelaxed(bytes);
+}
+
+void WebDavWorker::addBytesReceived(qint64 bytes) {
+    m_bytesReceived.fetchAndAddRelaxed(bytes);
+}
+
 void WebDavWorker::startServer(const QString &rootPath, quint16 port)
 {
     if (m_running) {
@@ -43,6 +48,9 @@ void WebDavWorker::startServer(const QString &rootPath, quint16 port)
     if (!rp.endsWith(QDir::separator())) rp += QDir::separator();
     m_rootPath = rp;
     m_port     = port;
+
+    m_bytesSent.storeRelaxed(0);
+    m_bytesReceived.storeRelaxed(0);
 
     m_tcpServer = new QTcpServer(this);
     connect(m_tcpServer, &QTcpServer::newConnection,
@@ -64,7 +72,6 @@ void WebDavWorker::startServer(const QString &rootPath, quint16 port)
     emit serverStarted(m_port);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void WebDavWorker::stopServer()
 {
     if (!m_running) return;
@@ -79,7 +86,6 @@ void WebDavWorker::stopServer()
         it.key()->blockSignals(true);
         it.key()->abort();
         it.key()->deleteLater();
-        // Clean up any open upload files
         if (it.value()->uploadFile) {
             it.value()->uploadFile->close();
             delete it.value()->uploadFile;
@@ -94,7 +100,6 @@ void WebDavWorker::stopServer()
     emit serverStopped();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void WebDavWorker::onNewConnection()
 {
     while (m_tcpServer && m_tcpServer->hasPendingConnections()) {
@@ -113,7 +118,6 @@ void WebDavWorker::onNewConnection()
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void WebDavWorker::onClientDisconnected()
 {
     QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
@@ -147,13 +151,14 @@ void WebDavWorker::onClientDisconnected()
     socket->deleteLater();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void WebDavWorker::onClientReadyRead()
 {
     QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket || !m_clients.contains(socket)) return;
 
-    m_clients[socket]->buffer += socket->readAll();
+    QByteArray data = socket->readAll();
+    m_clients[socket]->buffer += data;
+    addBytesReceived(data.size());
 
     parseIncoming(socket);
 
@@ -161,7 +166,6 @@ void WebDavWorker::onClientReadyRead()
         dispatchNext(socket);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void WebDavWorker::onStreamFinished()
 {
     QObject *streamer = sender();
@@ -175,25 +179,21 @@ void WebDavWorker::onStreamFinished()
     dispatchNext(socket);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void WebDavWorker::parseIncoming(QTcpSocket *socket)
 {
     if (!m_clients.contains(socket)) return;
     ClientState *st = m_clients[socket];
     auto rejectRequest = [&](int code, const QString &text) {
-        // Clean up upload file if present
         if (st->uploadFile) {
             st->uploadFile->close();
             delete st->uploadFile;
             st->uploadFile = nullptr;
         }
-        HttpUtils::sendError(socket, code, text, false);
+        HttpUtils::sendError(socket, code, text, false, this);
         socket->disconnectFromHost();
     };
 
     while (true) {
-
-        // ── Phase 1: Headers ──────────────────────────────────────────────────
         if (st->state == WaitingHeaders) {
             int sepIdx = st->buffer.indexOf("\r\n\r\n"), sepLen = 4;
             if (sepIdx < 0) {
@@ -239,7 +239,6 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
             } else {
                 QUrl targetUrl(target);
                 QString parsedPath;
-
                 if (targetUrl.isValid() && !targetUrl.scheme().isEmpty()) {
                     parsedPath = targetUrl.path(QUrl::FullyDecoded);
                 } else {
@@ -250,7 +249,6 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                     if (hPos >= 0) cut = qMin(cut, hPos);
                     parsedPath = target.left(cut);
                 }
-
                 if (parsedPath.isEmpty()) parsedPath = "/";
                 if (!parsedPath.startsWith('/')) parsedPath.prepend('/');
                 st->path = parsedPath;
@@ -307,8 +305,6 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                 }
             }
 
-            // ─── Исправленное условие ────────────────────────────────────────
-            // Временный файл создаётся только когда PUT/POST реально имеет тело
             bool needsUploadFile = (st->method == "PUT" || st->method == "POST") &&
                                    (st->chunked || st->contentLength > 0);
             if (needsUploadFile) {
@@ -336,6 +332,7 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
             if (expectHeader == "100-continue") {
                 socket->write("HTTP/1.1 100 Continue\r\n\r\n");
                 socket->flush();
+                addBytesSent(23);
             }
 
             st->state = WaitingBody;
@@ -349,10 +346,7 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                 "REQ");
         }
 
-        // ── Phase 2: Body ─────────────────────────────────────────────────────
         if (st->state == WaitingBody) {
-
-            // Streaming PUT: write directly to temp file
             if (st->uploadFile) {
                 if (st->chunked) {
                     if (!decodeChunkedToFile(st)) {
@@ -368,11 +362,9 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                             rejectRequest(500, "Internal Server Error");
                             return;
                         }
-                        // Not enough data yet – exit loop, wait for more
                         return;
                     }
                 } else {
-                    // Content-Length: write buffered data to file
                     qint64 need = st->contentLength - st->uploadFile->size();
                     if (need > 0 && !st->buffer.isEmpty()) {
                         qint64 take = qMin(need, (qint64)st->buffer.size());
@@ -387,7 +379,6 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                     if (st->uploadFile->size() < st->contentLength) return;
                 }
 
-                // Body fully received
                 st->uploadFile->close();
                 QString tempPath = st->uploadFile->fileName();
                 delete st->uploadFile;
@@ -401,7 +392,7 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                 req.tempFilePath = tempPath;
 
                 st->requestQueue.enqueue(req);
-                st->buffer.clear();   // discard any trailing bytes
+                st->buffer.clear();
 
                 st->state           = WaitingHeaders;
                 st->method.clear();
@@ -418,7 +409,6 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                 continue;
             }
 
-            // Non-streaming (small body methods)
             if (st->chunked) {
                 if (!decodeChunked(st)) {
                     if (st->chunkedTooLarge) {
@@ -429,7 +419,6 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                         rejectRequest(400, "Bad Request");
                         return;
                     }
-                    // Not enough data
                     return;
                 }
             } else {
@@ -472,7 +461,6 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void WebDavWorker::dispatchNext(QTcpSocket *socket)
 {
     if (!m_clients.contains(socket)) return;
@@ -485,14 +473,13 @@ void WebDavWorker::dispatchNext(QTcpSocket *socket)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void WebDavWorker::executeRequest(QTcpSocket *socket, const HttpRequest &req)
 {
     using namespace DavHandlers;
     const QString &rp = m_rootPath;
 
     if (req.method == "GET") {
-        FileStreamer *streamer = handleGet(socket, req, rp);
+        FileStreamer *streamer = handleGet(socket, req, rp, this);
         if (streamer && m_clients.contains(socket)) {
             m_clients[socket]->streaming = true;
             m_streamerToSocket[streamer] = socket;
@@ -507,23 +494,23 @@ void WebDavWorker::executeRequest(QTcpSocket *socket, const HttpRequest &req)
         return;
     }
 
-    if      (req.method == "OPTIONS" ) handleOptions (socket, req, rp);
-    else if (req.method == "HEAD"    ) handleHead    (socket, req, rp);
-    else if (req.method == "PUT"     ) handlePut     (socket, req, rp);
-    else if (req.method == "DELETE"  ) handleDelete  (socket, req, rp);
-    else if (req.method == "MKCOL"   ) handleMkcol   (socket, req, rp);
-    else if (req.method == "PROPFIND") handlePropfind(socket, req, rp);
-    else if (req.method == "MOVE"    ) handleMove    (socket, req, rp);
-    else if (req.method == "COPY"    ) handleCopy    (socket, req, rp);
+    if      (req.method == "OPTIONS" ) handleOptions (socket, req, rp, this);
+    else if (req.method == "HEAD"    ) handleHead    (socket, req, rp, this);
+    else if (req.method == "PUT"     ) handlePut     (socket, req, rp, this);
+    else if (req.method == "DELETE"  ) handleDelete  (socket, req, rp, this);
+    else if (req.method == "MKCOL"   ) handleMkcol   (socket, req, rp, this);
+    else if (req.method == "PROPFIND") handlePropfind(socket, req, rp, this);
+    else if (req.method == "MOVE"    ) handleMove    (socket, req, rp, this);
+    else if (req.method == "COPY"    ) handleCopy    (socket, req, rp, this);
     else {
         if (!req.tempFilePath.isEmpty())
             QFile::remove(req.tempFilePath);
-        HttpUtils::sendError(socket, 501, "Not Implemented",
-                             isKeepAlive(req));
+        HttpUtils::sendError(socket, 501, "Not Implemented", isKeepAlive(req), this);
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// decodeChunked and decodeChunkedToFile implementations unchanged (omitted for brevity)
+// ... same as before ...
 bool WebDavWorker::decodeChunked(ClientState *st)
 {
     st->chunkedParseError = false;

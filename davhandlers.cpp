@@ -2,6 +2,7 @@
 #include "httputils.h"
 #include "davutils.h"
 #include "filestreamer.h"
+#include "webdavworker.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -178,7 +179,8 @@ static QString destinationToLocalPath(const HttpRequest &req,
 
 // ─────────────────────────────────────────────────────────────────────────────
 void handleOptions(QTcpSocket *s, const HttpRequest &req,
-                   const QString & /*rootPath*/)
+                   const QString & /*rootPath*/,
+                   WebDavWorker *worker)
 {
     QMap<QString,QString> h;
     h["Allow"]          = "OPTIONS, GET, HEAD, PUT, DELETE,"
@@ -187,12 +189,13 @@ void handleOptions(QTcpSocket *s, const HttpRequest &req,
     h["MS-Author-Via"]  = "DAV";
     h["Content-Length"] = "0";
     h["Accept-Ranges"]  = "bytes";
-    HttpUtils::sendResponse(s, 200, "OK", h, {}, isKeepAlive(req));
+    HttpUtils::sendResponse(s, 200, "OK", h, {}, isKeepAlive(req), worker);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void sendDirListing(QTcpSocket *s, const HttpRequest &req,
-                    const QString &localDir)
+                    const QString &localDir,
+                    WebDavWorker *worker)
 {
     bool ka = isKeepAlive(req);
     QDir dir(localDir);
@@ -244,25 +247,26 @@ void sendDirListing(QTcpSocket *s, const HttpRequest &req,
     QMap<QString,QString> h;
     h["Content-Type"]   = "text/html; charset=utf-8";
     h["Content-Length"] = QString::number(body.size());
-    HttpUtils::sendResponse(s, 200, "OK", h, body, ka);
+    HttpUtils::sendResponse(s, 200, "OK", h, body, ka, worker);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void handleHead(QTcpSocket *s, const HttpRequest &req,
-                const QString &rootPath)
+                const QString &rootPath,
+                WebDavWorker *worker)
 {
     bool    ka = isKeepAlive(req);
     QString p  = DavUtils::localPath(req.path, rootPath);
-    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka); return; }
+    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka, worker); return; }
 
     QFileInfo fi(p);
-    if (!fi.exists()) { HttpUtils::sendError(s, 404, "Not Found", ka); return; }
+    if (!fi.exists()) { HttpUtils::sendError(s, 404, "Not Found", ka, worker); return; }
 
     if (fi.isDir()) {
         QMap<QString,QString> h;
         h["Content-Type"]  = "text/html; charset=utf-8";
         h["Accept-Ranges"] = "bytes";
-        HttpUtils::sendResponse(s, 200, "OK", h, {}, ka);
+        HttpUtils::sendResponse(s, 200, "OK", h, {}, ka, worker);
         return;
     }
 
@@ -276,7 +280,7 @@ void handleHead(QTcpSocket *s, const HttpRequest &req,
         h["Content-Range"]  = QString("bytes */%1").arg(fileSize);
         h["Content-Length"] = "0";
         h["Accept-Ranges"]  = "bytes";
-        HttpUtils::sendResponse(s, 416, "Range Not Satisfiable", h, {}, ka);
+        HttpUtils::sendResponse(s, 416, "Range Not Satisfiable", h, {}, ka, worker);
         return;
     }
 
@@ -295,29 +299,30 @@ void handleHead(QTcpSocket *s, const HttpRequest &req,
                                  .arg(from).arg(to).arg(fileSize);
 
     // HEAD: body is always empty
-    HttpUtils::sendResponse(s, statusCode, statusText, h, {}, ka);
+    HttpUtils::sendResponse(s, statusCode, statusText, h, {}, ka, worker);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 FileStreamer *handleGet(QTcpSocket *s, const HttpRequest &req,
-                        const QString &rootPath)
+                        const QString &rootPath,
+                        WebDavWorker *worker)
 {
     bool    ka = isKeepAlive(req);
     QString p  = DavUtils::localPath(req.path, rootPath);
     if (p.isEmpty()) {
-        HttpUtils::sendError(s, 403, "Forbidden", ka);
+        HttpUtils::sendError(s, 403, "Forbidden", ka, worker);
         return nullptr;
     }
 
     QFileInfo fi(p);
     if (!fi.exists()) {
-        HttpUtils::sendError(s, 404, "Not Found", ka);
+        HttpUtils::sendError(s, 404, "Not Found", ka, worker);
         return nullptr;
     }
 
     // ── Directory -> HTML listing ─────────────────────────────────────────────
     if (fi.isDir()) {
-        sendDirListing(s, req, p);
+        sendDirListing(s, req, p, worker);
         return nullptr;
     }
 
@@ -333,7 +338,7 @@ FileStreamer *handleGet(QTcpSocket *s, const HttpRequest &req,
         h["Last-Modified"]  = HttpUtils::formatDate(fi.lastModified());
         h["ETag"]           = etag;
         h["Cache-Control"]  = "public, max-age=3600";
-        HttpUtils::sendResponse(s, 200, "OK", h, {}, ka);
+        HttpUtils::sendResponse(s, 200, "OK", h, {}, ka, worker);
         return nullptr;
     }
 
@@ -344,7 +349,7 @@ FileStreamer *handleGet(QTcpSocket *s, const HttpRequest &req,
         h["ETag"]           = etag;
         h["Content-Length"] = "0";
         h["Accept-Ranges"]  = "bytes";
-        HttpUtils::sendResponse(s, 304, "Not Modified", h, {}, ka);
+        HttpUtils::sendResponse(s, 304, "Not Modified", h, {}, ka, worker);
         return nullptr;
     }
 
@@ -358,7 +363,7 @@ FileStreamer *handleGet(QTcpSocket *s, const HttpRequest &req,
         h["Content-Range"]  = QString("bytes */%1").arg(fileSize);
         h["Content-Length"] = "0";
         h["Accept-Ranges"]  = "bytes";
-        HttpUtils::sendResponse(s, 416, "Range Not Satisfiable", h, {}, ka);
+        HttpUtils::sendResponse(s, 416, "Range Not Satisfiable", h, {}, ka, worker);
         return nullptr;
     }
 
@@ -378,30 +383,29 @@ FileStreamer *handleGet(QTcpSocket *s, const HttpRequest &req,
         h["Content-Range"] = QString("bytes %1-%2/%3")
                                  .arg(rangeFrom).arg(rangeTo).arg(fileSize);
 
-    // ── Stream file by 256 KB chunks ─────────────────────────────────────────
-    // FileStreamer sends headers + body.
-    // Return pointer so Worker can connect finished() signal.
+    // ── Stream file ───────────────────────────────────────────────────────────
     return FileStreamer::create(s, statusCode, statusText, h,
-                                p, rangeFrom, sendLength, ka);
+                                p, rangeFrom, sendLength, ka, worker);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void handlePut(QTcpSocket *s, const HttpRequest &req,
-               const QString &rootPath)
+               const QString &rootPath,
+               WebDavWorker *worker)
 {
     bool    ka = isKeepAlive(req);
     QString p  = DavUtils::localPath(req.path, rootPath);
     if (p.isEmpty()) {
         // If there's a temp file, delete it
         if (!req.tempFilePath.isEmpty()) QFile::remove(req.tempFilePath);
-        HttpUtils::sendError(s, 403, "Forbidden", ka);
+        HttpUtils::sendError(s, 403, "Forbidden", ka, worker);
         return;
     }
 
     QFileInfo fi(p);
     if (fi.exists() && fi.isDir()) {
         if (!req.tempFilePath.isEmpty()) QFile::remove(req.tempFilePath);
-        HttpUtils::sendError(s, 405, "Method Not Allowed", ka);
+        HttpUtils::sendError(s, 405, "Method Not Allowed", ka, worker);
         return;
     }
 
@@ -418,14 +422,14 @@ void handlePut(QTcpSocket *s, const HttpRequest &req,
         }
         if (!QFile::rename(req.tempFilePath, p)) {
             QFile::remove(req.tempFilePath); // cleanup
-            HttpUtils::sendError(s, 500, "Internal Server Error", ka);
+            HttpUtils::sendError(s, 500, "Internal Server Error", ka, worker);
             return;
         }
     } else {
         // No body (zero-length file)
         QFile file(p);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            HttpUtils::sendError(s, 403, "Forbidden", ka);
+            HttpUtils::sendError(s, 403, "Forbidden", ka, worker);
             return;
         }
         file.close();
@@ -437,19 +441,20 @@ void handlePut(QTcpSocket *s, const HttpRequest &req,
     HttpUtils::sendResponse(s,
                             existedBefore ? 204 : 201,
                             existedBefore ? "No Content" : "Created",
-                            h, {}, ka);
+                            h, {}, ka, worker);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void handleDelete(QTcpSocket *s, const HttpRequest &req,
-                  const QString &rootPath)
+                  const QString &rootPath,
+                  WebDavWorker *worker)
 {
     bool    ka = isKeepAlive(req);
     QString p  = DavUtils::localPath(req.path, rootPath);
-    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka); return; }
+    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka, worker); return; }
 
     QFileInfo fi(p);
-    if (!fi.exists()) { HttpUtils::sendError(s, 404, "Not Found", ka); return; }
+    if (!fi.exists()) { HttpUtils::sendError(s, 404, "Not Found", ka, worker); return; }
 
     bool ok = fi.isDir()
                   ? QDir(p).removeRecursively()
@@ -458,44 +463,46 @@ void handleDelete(QTcpSocket *s, const HttpRequest &req,
     if (ok) {
         QMap<QString,QString> h;
         h["Content-Length"] = "0";
-        HttpUtils::sendResponse(s, 204, "No Content", h, {}, ka);
+        HttpUtils::sendResponse(s, 204, "No Content", h, {}, ka, worker);
     } else {
-        HttpUtils::sendError(s, 500, "Internal Server Error", ka);
+        HttpUtils::sendError(s, 500, "Internal Server Error", ka, worker);
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void handleMkcol(QTcpSocket *s, const HttpRequest &req,
-                 const QString &rootPath)
+                 const QString &rootPath,
+                 WebDavWorker *worker)
 {
     bool    ka = isKeepAlive(req);
     QString p  = DavUtils::localPath(req.path, rootPath);
-    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka); return; }
+    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka, worker); return; }
 
     if (QDir(p).exists()) {
-        HttpUtils::sendError(s, 405, "Method Not Allowed", ka);
+        HttpUtils::sendError(s, 405, "Method Not Allowed", ka, worker);
         return;
     }
 
     if (QDir().mkpath(p)) {
         QMap<QString,QString> h;
         h["Content-Length"] = "0";
-        HttpUtils::sendResponse(s, 201, "Created", h, {}, ka);
+        HttpUtils::sendResponse(s, 201, "Created", h, {}, ka, worker);
     } else {
-        HttpUtils::sendError(s, 409, "Conflict", ka);
+        HttpUtils::sendError(s, 409, "Conflict", ka, worker);
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void handlePropfind(QTcpSocket *s, const HttpRequest &req,
-                    const QString &rootPath)
+                    const QString &rootPath,
+                    WebDavWorker *worker)
 {
     bool    ka = isKeepAlive(req);
     QString p  = DavUtils::localPath(req.path, rootPath);
-    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka); return; }
+    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka, worker); return; }
 
     QFileInfo fi(p);
-    if (!fi.exists()) { HttpUtils::sendError(s, 404, "Not Found", ka); return; }
+    if (!fi.exists()) { HttpUtils::sendError(s, 404, "Not Found", ka, worker); return; }
 
     // Parse Depth
     int     depth = 1;
@@ -506,7 +513,7 @@ void handlePropfind(QTcpSocket *s, const HttpRequest &req,
         bool okDepth = false;
         int parsed = dh.toInt(&okDepth);
         if (!okDepth || (parsed != 0 && parsed != 1)) {
-            HttpUtils::sendError(s, 400, "Bad Request", ka);
+            HttpUtils::sendError(s, 400, "Bad Request", ka, worker);
             return;
         }
         depth = parsed;
@@ -537,44 +544,45 @@ void handlePropfind(QTcpSocket *s, const HttpRequest &req,
     h["Content-Type"]   = "application/xml; charset=utf-8";
     h["Content-Length"] = QString::number(body.size());
     h["DAV"]            = "1, 2";
-    HttpUtils::sendResponse(s, 207, "Multi-Status", h, body, ka);
+    HttpUtils::sendResponse(s, 207, "Multi-Status", h, body, ka, worker);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void handleMove(QTcpSocket *s, const HttpRequest &req,
-                const QString &rootPath)
+                const QString &rootPath,
+                WebDavWorker *worker)
 {
     bool    ka  = isKeepAlive(req);
     QString src = DavUtils::localPath(req.path, rootPath);
     QString dst = destinationToLocalPath(req, rootPath);
 
     if (src.isEmpty() || dst.isEmpty()) {
-        HttpUtils::sendError(s, 400, "Bad Request", ka); return;
+        HttpUtils::sendError(s, 400, "Bad Request", ka, worker); return;
     }
     if (!QFileInfo::exists(src)) {
-        HttpUtils::sendError(s, 404, "Not Found", ka); return;
+        HttpUtils::sendError(s, 404, "Not Found", ka, worker); return;
     }
     if (samePath(src, rootPath) || samePath(dst, rootPath) || samePath(src, dst)) {
-        HttpUtils::sendError(s, 403, "Forbidden", ka); return;
+        HttpUtils::sendError(s, 403, "Forbidden", ka, worker); return;
     }
 
     bool overwrite = req.headers.value("overwrite", "T").toUpper() != "F";
     bool dstExisted = QFileInfo::exists(dst);
     if (QFileInfo::exists(dst)) {
         if (!overwrite) {
-            HttpUtils::sendError(s, 412, "Precondition Failed", ka); return;
+            HttpUtils::sendError(s, 412, "Precondition Failed", ka, worker); return;
         }
         QFileInfo dfi(dst);
         bool removed = dfi.isDir()
                            ? QDir(dst).removeRecursively()
                            : QFile::remove(dst);
         if (!removed) {
-            HttpUtils::sendError(s, 500, "Internal Server Error", ka); return;
+            HttpUtils::sendError(s, 500, "Internal Server Error", ka, worker); return;
         }
     }
 
     if (!QDir().mkpath(QFileInfo(dst).absolutePath())) {
-        HttpUtils::sendError(s, 409, "Conflict", ka); return;
+        HttpUtils::sendError(s, 409, "Conflict", ka, worker); return;
     }
 
     QFileInfo srcInfo(src);
@@ -588,46 +596,47 @@ void handleMove(QTcpSocket *s, const HttpRequest &req,
         HttpUtils::sendResponse(s,
                                 dstExisted ? 204 : 201,
                                 dstExisted ? "No Content" : "Created",
-                                h, {}, ka);
+                                h, {}, ka, worker);
     } else {
-        HttpUtils::sendError(s, 500, "Internal Server Error", ka);
+        HttpUtils::sendError(s, 500, "Internal Server Error", ka, worker);
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void handleCopy(QTcpSocket *s, const HttpRequest &req,
-                const QString &rootPath)
+                const QString &rootPath,
+                WebDavWorker *worker)
 {
     bool    ka  = isKeepAlive(req);
     QString src = DavUtils::localPath(req.path, rootPath);
     QString dst = destinationToLocalPath(req, rootPath);
 
     if (src.isEmpty() || dst.isEmpty()) {
-        HttpUtils::sendError(s, 400, "Bad Request", ka); return;
+        HttpUtils::sendError(s, 400, "Bad Request", ka, worker); return;
     }
     if (!QFileInfo::exists(src)) {
-        HttpUtils::sendError(s, 404, "Not Found", ka); return;
+        HttpUtils::sendError(s, 404, "Not Found", ka, worker); return;
     }
     if (samePath(src, rootPath) || samePath(dst, rootPath) || samePath(src, dst)) {
-        HttpUtils::sendError(s, 403, "Forbidden", ka); return;
+        HttpUtils::sendError(s, 403, "Forbidden", ka, worker); return;
     }
     QFileInfo srcInfo(src);
     if (srcInfo.isDir() && isInsidePath(dst, src)) {
-        HttpUtils::sendError(s, 409, "Conflict", ka); return;
+        HttpUtils::sendError(s, 409, "Conflict", ka, worker); return;
     }
 
     bool overwrite = req.headers.value("overwrite", "T").toUpper() != "F";
     bool dstExisted = QFileInfo::exists(dst);
     if (QFileInfo::exists(dst)) {
         if (!overwrite) {
-            HttpUtils::sendError(s, 412, "Precondition Failed", ka); return;
+            HttpUtils::sendError(s, 412, "Precondition Failed", ka, worker); return;
         }
         QFileInfo dfi(dst);
         bool removed = dfi.isDir()
                            ? QDir(dst).removeRecursively()
                            : QFile::remove(dst);
         if (!removed) {
-            HttpUtils::sendError(s, 500, "Internal Server Error", ka); return;
+            HttpUtils::sendError(s, 500, "Internal Server Error", ka, worker); return;
         }
     }
 
@@ -654,9 +663,9 @@ void handleCopy(QTcpSocket *s, const HttpRequest &req,
         HttpUtils::sendResponse(s,
                                 dstExisted ? 204 : 201,
                                 dstExisted ? "No Content" : "Created",
-                                h, {}, ka);
+                                h, {}, ka, worker);
     } else {
-        HttpUtils::sendError(s, 500, "Internal Server Error", ka);
+        HttpUtils::sendError(s, 500, "Internal Server Error", ka, worker);
     }
 }
 

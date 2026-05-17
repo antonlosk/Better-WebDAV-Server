@@ -21,6 +21,9 @@ public:
     quint16 port()      const;
     QString rootPath()  const;
 
+    qint64  bytesSent();
+    qint64  bytesReceived();
+
 signals:
     void logMessage(const QString &message, const QString &level);
     void serverStarted(quint16 port);
@@ -41,8 +44,8 @@ private:
     QThread      *m_thread  = nullptr;
     WebDavWorker *m_worker  = nullptr;
 
-    bool    m_running  = false;
+    bool    m_running      = false;
     bool    m_startPending = false;
-    quint16 m_port     = 80;
+    quint16 m_port         = 80;
     QString m_rootPath;
 };

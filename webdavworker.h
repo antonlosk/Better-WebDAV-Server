@@ -7,6 +7,7 @@
 #include <QQueue>
 #include <QFile>
 #include <QTemporaryFile>
+#include <QAtomicInteger>
 
 #include "davhandlers.h"
 #include "davutils.h"
@@ -20,6 +21,14 @@ class WebDavWorker : public QObject
 public:
     explicit WebDavWorker(QObject *parent = nullptr);
     ~WebDavWorker();
+
+    // Direct atomic counters (can be called from any thread)
+    qint64 bytesSent()     const { return m_bytesSent.loadRelaxed(); }
+    qint64 bytesReceived() const { return m_bytesReceived.loadRelaxed(); }
+
+    // Increment counters (called by helper functions / streamer)
+    void addBytesSent(qint64 bytes);
+    void addBytesReceived(qint64 bytes);
 
 public slots:
     void startServer(const QString &rootPath, quint16 port);
@@ -44,25 +53,21 @@ private:
 
     struct ClientState {
         QByteArray            buffer;
-
         ParseState            state           = WaitingHeaders;
         QString               method;
         QString               path;
         QString               version;
         QMap<QString,QString> headers;
         qint64                contentLength   = 0;
-        QByteArray            body;           // used only for non-PUT methods
+        QByteArray            body;
         bool                  expectContinue  = false;
         bool                  chunked         = false;
         bool                  chunkedComplete = false;
         bool                  chunkedParseError = false;
         bool                  chunkedTooLarge = false;
-
-        // Streaming upload for PUT
         QTemporaryFile       *uploadFile      = nullptr;
-        QString               uploadPath;     // final target path (for logging)
+        QString               uploadPath;
         bool                  uploadFailed    = false;
-
         QQueue<HttpRequest>   requestQueue;
         bool                  streaming       = false;
     };
@@ -75,9 +80,12 @@ private:
     QMap<QTcpSocket*, ClientState*> m_clients;
     QMap<QObject*,    QTcpSocket*>  m_streamerToSocket;
 
+    QAtomicInteger<qint64> m_bytesSent     = 0;
+    QAtomicInteger<qint64> m_bytesReceived = 0;
+
     void parseIncoming   (QTcpSocket *socket);
     void dispatchNext    (QTcpSocket *socket);
     bool decodeChunked   (ClientState *st);
-    bool decodeChunkedToFile(ClientState *st);   // <- added
+    bool decodeChunkedToFile(ClientState *st);
     void executeRequest  (QTcpSocket *socket, const HttpRequest &req);
 };

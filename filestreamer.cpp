@@ -1,9 +1,9 @@
 #include "filestreamer.h"
 #include "httputils.h"
+#include "webdavworker.h"
 
 #include <QDateTime>
 
-// ─────────────────────────────────────────────────────────────────────────────
 FileStreamer *FileStreamer::create(
     QTcpSocket                  *socket,
     int                          statusCode,
@@ -12,19 +12,18 @@ FileStreamer *FileStreamer::create(
     const QString               &filePath,
     qint64                       offset,
     qint64                       length,
-    bool                         keepAlive)
+    bool                         keepAlive,
+    WebDavWorker                *worker)
 {
     if (!socket || !socket->isOpen()) return nullptr;
 
-    // Open file first, then send headers.
     auto *streamer = new FileStreamer(socket, filePath, offset, length,
-                                      keepAlive);
+                                      keepAlive, worker);
     if (!streamer->m_file.isOpen()) {
         delete streamer;
         return nullptr;
     }
 
-    // ── Send HTTP headers ─────────────────────────────────────────────────────
     QByteArray headerData;
     headerData.reserve(512);
     headerData += QString("HTTP/1.1 %1 %2\r\n")
@@ -44,6 +43,9 @@ FileStreamer *FileStreamer::create(
 
     socket->write(headerData);
 
+    if (worker)
+        worker->addBytesSent(headerData.size());
+
     connect(socket,   &QTcpSocket::bytesWritten,
             streamer, &FileStreamer::onBytesWritten,
             Qt::UniqueConnection);
@@ -52,37 +54,35 @@ FileStreamer *FileStreamer::create(
             streamer, &FileStreamer::onSocketDisconnected,
             Qt::UniqueConnection);
 
-    // Send first chunk
     streamer->sendNextChunk();
 
     return streamer;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 FileStreamer::FileStreamer(
     QTcpSocket    *socket,
     const QString &filePath,
     qint64         offset,
     qint64         length,
     bool           keepAlive,
+    WebDavWorker  *worker,
     QObject       *parent)
     : QObject(parent)
     , m_socket(socket)
     , m_file(filePath)
     , m_remaining(length)
     , m_keepAlive(keepAlive)
+    , m_worker(worker)
 {
     if (!m_file.open(QIODevice::ReadOnly)) return;
     if (offset > 0) m_file.seek(offset);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void FileStreamer::sendNextChunk()
 {
     if (m_done || m_fileDone) return;
     if (!m_socket || !m_socket->isOpen()) { finish(false); return; }
 
-    // If socket buffer is full, wait for bytesWritten
     if (m_socket->bytesToWrite() > SOCKET_BUFFER_LIMIT) return;
 
     while (m_remaining > 0) {
@@ -92,7 +92,6 @@ void FileStreamer::sendNextChunk()
         QByteArray chunk  = m_file.read(toRead);
 
         if (chunk.isEmpty()) {
-            // File ended earlier than expected - likely truncated
             finish(false);
             return;
         }
@@ -105,28 +104,22 @@ void FileStreamer::sendNextChunk()
 
         m_remaining -= chunk.size();
 
-        // Stop reading when buffer is full
+        if (m_worker)
+            m_worker->addBytesSent(chunk.size());
+
         if (m_socket->bytesToWrite() > SOCKET_BUFFER_LIMIT) break;
     }
 
-    // Entire file has been read and queued in Qt buffer
     if (m_remaining <= 0) {
         m_file.close();
         m_fileDone = true;
 
-        // ── Key behavior ──────────────────────────────────────────────────────
-        // Do NOT close socket here.
-        // Data may still be pending in Qt/OS buffers.
-        // Wait for onBytesWritten where bytesToWrite() reaches 0.
         if (m_socket->bytesToWrite() == 0) {
-            // Buffer already empty - all data sent
             finish(true);
         }
-        // otherwise finish() will be called from onBytesWritten
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void FileStreamer::onBytesWritten(qint64 /*bytes*/)
 {
     if (m_done) return;
