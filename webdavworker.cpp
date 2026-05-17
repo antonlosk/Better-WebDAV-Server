@@ -9,7 +9,9 @@
 
 namespace {
 constexpr qint64 MAX_HEADER_BYTES      = 64 * 1024;
-constexpr qint64 MAX_REQUEST_BODY_BYTES = 256 * 1024 * 1024;
+// Limit for Content-Length based uploads (10 GB).
+// Chunked transfers are limited only by available disk space.
+constexpr qint64 MAX_CONTENT_LENGTH     = 10LL * 1024 * 1024 * 1024;
 constexpr int    MAX_QUEUED_REQUESTS   = 256;
 }
 
@@ -77,6 +79,11 @@ void WebDavWorker::stopServer()
         it.key()->blockSignals(true);
         it.key()->abort();
         it.key()->deleteLater();
+        // Clean up any open upload files
+        if (it.value()->uploadFile) {
+            it.value()->uploadFile->close();
+            delete it.value()->uploadFile;
+        }
         delete it.value();
     }
     m_clients.clear();
@@ -126,8 +133,16 @@ void WebDavWorker::onClientDisconnected()
             ++it;
     }
 
-    if (m_clients.contains(socket))
-        delete m_clients.take(socket);
+    if (m_clients.contains(socket)) {
+        ClientState *st = m_clients[socket];
+        if (st->uploadFile) {
+            st->uploadFile->close();
+            delete st->uploadFile;
+            st->uploadFile = nullptr;
+        }
+        delete st;
+        m_clients.remove(socket);
+    }
 
     socket->deleteLater();
 }
@@ -166,6 +181,12 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
     if (!m_clients.contains(socket)) return;
     ClientState *st = m_clients[socket];
     auto rejectRequest = [&](int code, const QString &text) {
+        // Clean up upload file if present
+        if (st->uploadFile) {
+            st->uploadFile->close();
+            delete st->uploadFile;
+            st->uploadFile = nullptr;
+        }
         HttpUtils::sendError(socket, code, text, false);
         socket->disconnectFromHost();
     };
@@ -246,6 +267,8 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
             st->chunkedComplete = false;
             st->chunkedParseError = false;
             st->chunkedTooLarge = false;
+            st->uploadFailed    = false;
+            st->body.clear();
 
             for (const QByteArray &line : headerBlock.split('\n')) {
                 QByteArray l = line.trimmed();
@@ -276,7 +299,7 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                         rejectRequest(400, "Bad Request");
                         return;
                     }
-                    if (cl > MAX_REQUEST_BODY_BYTES) {
+                    if (cl > MAX_CONTENT_LENGTH) {
                         rejectRequest(413, "Payload Too Large");
                         return;
                     }
@@ -284,7 +307,25 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                 }
             }
 
-            st->body.clear();
+            // ─── Исправленное условие ────────────────────────────────────────
+            // Временный файл создаётся только когда PUT/POST реально имеет тело
+            bool needsUploadFile = (st->method == "PUT" || st->method == "POST") &&
+                                   (st->chunked || st->contentLength > 0);
+            if (needsUploadFile) {
+                st->uploadPath = DavUtils::localPath(st->path, m_rootPath);
+                if (st->uploadPath.isEmpty()) {
+                    emit logMessage("PUT/POST rejected: invalid path", "WARN");
+                    rejectRequest(403, "Forbidden");
+                    return;
+                }
+                st->uploadFile = new QTemporaryFile();
+                st->uploadFile->setAutoRemove(false);
+                if (!st->uploadFile->open()) {
+                    emit logMessage("PUT/POST: failed to create temporary file", "ERROR");
+                    rejectRequest(500, "Internal Server Error");
+                    return;
+                }
+            }
 
             const QString expectHeader =
                 st->headers.value("expect", "").trimmed().toLower();
@@ -311,18 +352,86 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
         // ── Phase 2: Body ─────────────────────────────────────────────────────
         if (st->state == WaitingBody) {
 
+            // Streaming PUT: write directly to temp file
+            if (st->uploadFile) {
+                if (st->chunked) {
+                    if (!decodeChunkedToFile(st)) {
+                        if (st->chunkedTooLarge) {
+                            rejectRequest(413, "Payload Too Large");
+                            return;
+                        }
+                        if (st->chunkedParseError) {
+                            rejectRequest(400, "Bad Request");
+                            return;
+                        }
+                        if (st->uploadFailed) {
+                            rejectRequest(500, "Internal Server Error");
+                            return;
+                        }
+                        // Not enough data yet – exit loop, wait for more
+                        return;
+                    }
+                } else {
+                    // Content-Length: write buffered data to file
+                    qint64 need = st->contentLength - st->uploadFile->size();
+                    if (need > 0 && !st->buffer.isEmpty()) {
+                        qint64 take = qMin(need, (qint64)st->buffer.size());
+                        qint64 written = st->uploadFile->write(st->buffer.left((int)take));
+                        if (written != take) {
+                            st->uploadFailed = true;
+                            rejectRequest(500, "Internal Server Error");
+                            return;
+                        }
+                        st->buffer = st->buffer.mid((int)take);
+                    }
+                    if (st->uploadFile->size() < st->contentLength) return;
+                }
+
+                // Body fully received
+                st->uploadFile->close();
+                QString tempPath = st->uploadFile->fileName();
+                delete st->uploadFile;
+                st->uploadFile = nullptr;
+
+                HttpRequest req;
+                req.method      = st->method;
+                req.path        = st->path;
+                req.version     = st->version;
+                req.headers     = st->headers;
+                req.tempFilePath = tempPath;
+
+                st->requestQueue.enqueue(req);
+                st->buffer.clear();   // discard any trailing bytes
+
+                st->state           = WaitingHeaders;
+                st->method.clear();
+                st->path.clear();
+                st->version.clear();
+                st->headers.clear();
+                st->contentLength   = 0;
+                st->body.clear();
+                st->expectContinue  = false;
+                st->chunked         = false;
+                st->chunkedComplete = false;
+                st->chunkedParseError = false;
+                st->chunkedTooLarge = false;
+                continue;
+            }
+
+            // Non-streaming (small body methods)
             if (st->chunked) {
                 if (!decodeChunked(st)) {
                     if (st->chunkedTooLarge) {
                         rejectRequest(413, "Payload Too Large");
-                    } else if (st->chunkedParseError) {
-                        rejectRequest(400, "Bad Request");
+                        return;
                     }
+                    if (st->chunkedParseError) {
+                        rejectRequest(400, "Bad Request");
+                        return;
+                    }
+                    // Not enough data
                     return;
                 }
-                emit logMessage(
-                    QString("   Chunked complete: %1 bytes")
-                        .arg(st->body.size()), "INFO");
             } else {
                 qint64 need = st->contentLength - (qint64)st->body.size();
                 if (need > 0 && !st->buffer.isEmpty()) {
@@ -406,9 +515,12 @@ void WebDavWorker::executeRequest(QTcpSocket *socket, const HttpRequest &req)
     else if (req.method == "PROPFIND") handlePropfind(socket, req, rp);
     else if (req.method == "MOVE"    ) handleMove    (socket, req, rp);
     else if (req.method == "COPY"    ) handleCopy    (socket, req, rp);
-    else
+    else {
+        if (!req.tempFilePath.isEmpty())
+            QFile::remove(req.tempFilePath);
         HttpUtils::sendError(socket, 501, "Not Implemented",
                              isKeepAlive(req));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -475,6 +587,7 @@ bool WebDavWorker::decodeChunked(ClientState *st)
 
         int chunkEol = 0;
         int chunkEolPos = findLineEnd(st->buffer, (int)(dataStart + chunkSize), chunkEol);
+        if (chunkEolPos < 0) return false;
         if (chunkEolPos != dataStart + chunkSize) {
             st->chunkedParseError = true;
             return false;
@@ -484,10 +597,92 @@ bool WebDavWorker::decodeChunked(ClientState *st)
         if ((qint64)st->buffer.size() < needed) return false;
 
         st->body += st->buffer.mid((int)dataStart, (int)chunkSize);
-        if ((qint64)st->body.size() > MAX_REQUEST_BODY_BYTES) {
+        if ((qint64)st->body.size() > MAX_CONTENT_LENGTH) {
             st->chunkedTooLarge = true;
             return false;
         }
+        st->buffer = st->buffer.mid((int)needed);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+bool WebDavWorker::decodeChunkedToFile(ClientState *st)
+{
+    st->chunkedParseError = false;
+    st->chunkedTooLarge = false;
+
+    auto findLineEnd = [](const QByteArray &buf, int from, int &eolLen) -> int {
+        int crlf = buf.indexOf("\r\n", from);
+        int lf   = buf.indexOf('\n', from);
+        if (crlf >= 0 && (lf < 0 || crlf <= lf)) {
+            eolLen = 2;
+            return crlf;
+        }
+        if (lf >= 0) {
+            eolLen = 1;
+            return lf;
+        }
+        eolLen = 0;
+        return -1;
+    };
+
+    while (true) {
+        int sizeLineEol = 0;
+        int crlfIdx = findLineEnd(st->buffer, 0, sizeLineEol);
+        if (crlfIdx < 0) return false;
+
+        QByteArray sizeLine = st->buffer.left(crlfIdx);
+        int semiIdx = sizeLine.indexOf(';');
+        if (semiIdx >= 0) sizeLine = sizeLine.left(semiIdx);
+        sizeLine = sizeLine.trimmed();
+
+        if (sizeLine.isEmpty()) {
+            st->chunkedParseError = true;
+            return false;
+        }
+
+        bool ok = false;
+        qint64 chunkSize = sizeLine.toLongLong(&ok, 16);
+        if (!ok) {
+            st->chunkedParseError = true;
+            return false;
+        }
+
+        if (chunkSize == 0) {
+            st->buffer = st->buffer.mid(crlfIdx + sizeLineEol);
+            while (true) {
+                int tailEol = 0;
+                int end = findLineEnd(st->buffer, 0, tailEol);
+                if (end < 0) return false;
+                if (end == 0) { st->buffer = st->buffer.mid(tailEol); break; }
+                st->buffer = st->buffer.mid(end + tailEol);
+            }
+            st->chunkedComplete = true;
+            return true;
+        }
+
+        qint64 dataStart = crlfIdx + sizeLineEol;
+        if ((qint64)st->buffer.size() < dataStart + chunkSize) return false;
+
+        int chunkEol = 0;
+        int chunkEolPos = findLineEnd(st->buffer, (int)(dataStart + chunkSize), chunkEol);
+        if (chunkEolPos < 0) return false;
+        if (chunkEolPos != dataStart + chunkSize) {
+            st->chunkedParseError = true;
+            return false;
+        }
+
+        qint64 needed = dataStart + chunkSize + chunkEol;
+        if ((qint64)st->buffer.size() < needed) return false;
+
+        // Write chunk to temporary file
+        qint64 written = st->uploadFile->write(st->buffer.mid((int)dataStart, (int)chunkSize));
+        if (written != chunkSize) {
+            st->uploadFailed = true;
+            return false;
+        }
+
+        // No explicit size limit – limited by disk space.
         st->buffer = st->buffer.mid((int)needed);
     }
 }

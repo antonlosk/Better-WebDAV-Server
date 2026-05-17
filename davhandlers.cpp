@@ -391,27 +391,45 @@ void handlePut(QTcpSocket *s, const HttpRequest &req,
 {
     bool    ka = isKeepAlive(req);
     QString p  = DavUtils::localPath(req.path, rootPath);
-    if (p.isEmpty()) { HttpUtils::sendError(s, 403, "Forbidden", ka); return; }
-    const bool existedBefore = QFileInfo::exists(p);
-
-    // Create parent directories if needed
-    QDir().mkpath(QFileInfo(p).absolutePath());
-
-    QFile file(p);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    if (p.isEmpty()) {
+        // If there's a temp file, delete it
+        if (!req.tempFilePath.isEmpty()) QFile::remove(req.tempFilePath);
         HttpUtils::sendError(s, 403, "Forbidden", ka);
         return;
     }
 
-    if (!req.body.isEmpty()) {
-        qint64 written = file.write(req.body);
-        if (written != (qint64)req.body.size()) {
-            file.close();
+    QFileInfo fi(p);
+    if (fi.exists() && fi.isDir()) {
+        if (!req.tempFilePath.isEmpty()) QFile::remove(req.tempFilePath);
+        HttpUtils::sendError(s, 405, "Method Not Allowed", ka);
+        return;
+    }
+
+    const bool existedBefore = fi.exists();
+
+    // Create parent directories if needed
+    QDir().mkpath(QFileInfo(p).absolutePath());
+
+    // If the request provided a temp file, move it to the final path
+    if (!req.tempFilePath.isEmpty()) {
+        // Remove destination if it exists (overwrite)
+        if (QFile::exists(p)) {
+            QFile::remove(p);
+        }
+        if (!QFile::rename(req.tempFilePath, p)) {
+            QFile::remove(req.tempFilePath); // cleanup
             HttpUtils::sendError(s, 500, "Internal Server Error", ka);
             return;
         }
+    } else {
+        // No body (zero-length file)
+        QFile file(p);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            HttpUtils::sendError(s, 403, "Forbidden", ka);
+            return;
+        }
+        file.close();
     }
-    file.close();
 
     QMap<QString,QString> h;
     h["Content-Length"] = "0";

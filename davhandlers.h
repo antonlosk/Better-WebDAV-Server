@@ -15,7 +15,8 @@ struct HttpRequest {
     QString               path;
     QString               version;
     QMap<QString,QString> headers;
-    QByteArray            body;
+    QByteArray            body;            // kept for non-PUT methods (small bodies)
+    QString               tempFilePath;    // path to temp file for PUT streaming
 };
 
 // Forward declaration

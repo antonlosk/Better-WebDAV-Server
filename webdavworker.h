@@ -5,8 +5,11 @@
 #include <QTcpSocket>
 #include <QMap>
 #include <QQueue>
+#include <QFile>
+#include <QTemporaryFile>
 
 #include "davhandlers.h"
+#include "davutils.h"
 
 class FileStreamer;
 
@@ -48,12 +51,17 @@ private:
         QString               version;
         QMap<QString,QString> headers;
         qint64                contentLength   = 0;
-        QByteArray            body;
+        QByteArray            body;           // used only for non-PUT methods
         bool                  expectContinue  = false;
         bool                  chunked         = false;
         bool                  chunkedComplete = false;
         bool                  chunkedParseError = false;
         bool                  chunkedTooLarge = false;
+
+        // Streaming upload for PUT
+        QTemporaryFile       *uploadFile      = nullptr;
+        QString               uploadPath;     // final target path (for logging)
+        bool                  uploadFailed    = false;
 
         QQueue<HttpRequest>   requestQueue;
         bool                  streaming       = false;
@@ -67,8 +75,9 @@ private:
     QMap<QTcpSocket*, ClientState*> m_clients;
     QMap<QObject*,    QTcpSocket*>  m_streamerToSocket;
 
-    void parseIncoming (QTcpSocket *socket);
-    void dispatchNext  (QTcpSocket *socket);
-    bool decodeChunked (ClientState *st);
-    void executeRequest(QTcpSocket *socket, const HttpRequest &req);
+    void parseIncoming   (QTcpSocket *socket);
+    void dispatchNext    (QTcpSocket *socket);
+    bool decodeChunked   (ClientState *st);
+    bool decodeChunkedToFile(ClientState *st);   // <- added
+    void executeRequest  (QTcpSocket *socket, const HttpRequest &req);
 };
