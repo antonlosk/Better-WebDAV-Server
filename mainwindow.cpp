@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "dashboard.h"
+#include "webdavserver.h"
 
 #include <QApplication>
 #include <QVBoxLayout>
@@ -11,17 +13,8 @@
 #include <QSizePolicy>
 #include <QDir>
 #include <QFont>
-#include <QChart>
-#include <QDateTimeAxis>
-#include <QValueAxis>
-
-#ifdef Q_OS_WIN
-#include <windows.h>
-#include <psapi.h>
-#else
-#include <QFile>
-#include <QTextStream>
-#endif
+#include <QMenu>
+#include <QScrollArea>
 
 // ─────────────────────────────────────────────────────────────────────────────
 MainWindow::MainWindow(QWidget *parent)
@@ -44,26 +37,30 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupTopToolbar();
     setupLogPage();
-    setupDashboardPage();
+
+    m_dashboard = new Dashboard(this);
+    m_dashboard->setServer(m_server);
+    m_dashboard->setMinimumHeight(800);   // чтобы графики не сжимались
+
+    // Обернём дашборд в QScrollArea
+    QScrollArea *scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setWidget(m_dashboard);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
     setupBottomToolbar();
     applyStyles();
 
-    // Global font
     QFont appFont = QApplication::font();
     appFont.setFamily("Segoe UI");
     appFont.setPointSize(9);
     QApplication::setFont(appFont);
 
-    // Stacked widget (dashboard / log)
     m_stack = new QStackedWidget(this);
-    m_stack->addWidget(m_dashboardPage);   // index 0
-    m_stack->addWidget(m_logEdit);         // index 1
+    m_stack->addWidget(scrollArea);   // index 0 – дашборд с прокруткой
+    m_stack->addWidget(m_logEdit);    // index 1 – лог
     setCentralWidget(m_stack);
-    m_stack->setCurrentIndex(0); // show dashboard by default
-
-    // Dashboard update timer (1 sec)
-    m_dashboardTimer = new QTimer(this);
-    connect(m_dashboardTimer, &QTimer::timeout, this, &MainWindow::updateDashboard);
+    m_stack->setCurrentIndex(0);      // открываем дашборд по умолчанию
 
     onLogMessage("Better WebDAV Server is ready.", "INFO");
     onLogMessage("Set a root directory and click Start.", "INFO");
@@ -193,63 +190,6 @@ void MainWindow::setupTopToolbar()
     connect(m_btnBrowse, &QPushButton::clicked, this, &MainWindow::onBrowse);
     connect(m_btnStart,  &QPushButton::clicked, this, &MainWindow::onStart);
     connect(m_btnStop,   &QPushButton::clicked, this, &MainWindow::onStop);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-void MainWindow::setupDashboardPage()
-{
-    m_dashboardPage = new QWidget(this);
-    QVBoxLayout *dashLayout = new QVBoxLayout(m_dashboardPage);
-    dashLayout->setContentsMargins(12, 12, 12, 12);
-    dashLayout->setSpacing(12);
-
-    // ── Memory chart ────────────────────────────────────────────────────────
-    m_memoryChart = new QChart();
-    m_memoryChart->setTitle("Memory Usage (MB)");
-
-    m_memorySeries = new QLineSeries();
-    m_memorySeries->setName("RAM");
-    m_memoryChart->addSeries(m_memorySeries);
-
-    m_memoryAxisX = new QDateTimeAxis();
-    m_memoryAxisX->setFormat("hh:mm:ss");
-    m_memoryAxisX->setTitleText("Time");
-    m_memoryChart->addAxis(m_memoryAxisX, Qt::AlignBottom);
-    m_memorySeries->attachAxis(m_memoryAxisX);
-
-    m_memoryAxisY = new QValueAxis();
-    m_memoryAxisY->setTitleText("MB");
-    m_memoryAxisY->setLabelFormat("%.1f");
-    m_memoryChart->addAxis(m_memoryAxisY, Qt::AlignLeft);
-    m_memorySeries->attachAxis(m_memoryAxisY);
-
-    m_memoryChartView = new QChartView(m_memoryChart);
-    m_memoryChartView->setRenderHint(QPainter::Antialiasing);
-    dashLayout->addWidget(m_memoryChartView);
-
-    // ── Network chart ───────────────────────────────────────────────────────
-    m_networkChart = new QChart();
-    m_networkChart->setTitle("Network Activity (MB/s)");
-
-    m_networkSeries = new QLineSeries();
-    m_networkSeries->setName("Throughput");
-    m_networkChart->addSeries(m_networkSeries);
-
-    m_networkAxisX = new QDateTimeAxis();
-    m_networkAxisX->setFormat("hh:mm:ss");
-    m_networkAxisX->setTitleText("Time");
-    m_networkChart->addAxis(m_networkAxisX, Qt::AlignBottom);
-    m_networkSeries->attachAxis(m_networkAxisX);
-
-    m_networkAxisY = new QValueAxis();
-    m_networkAxisY->setTitleText("MB/s");
-    m_networkAxisY->setLabelFormat("%.2f");
-    m_networkChart->addAxis(m_networkAxisY, Qt::AlignLeft);
-    m_networkSeries->attachAxis(m_networkAxisY);
-
-    m_networkChartView = new QChartView(m_networkChart);
-    m_networkChartView->setRenderHint(QPainter::Antialiasing);
-    dashLayout->addWidget(m_networkChartView);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -548,78 +488,6 @@ void MainWindow::showLogs()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-void MainWindow::updateDashboard()
-{
-    // 1. Memory usage
-    qreal memMB = getProcessMemoryMB();
-    QDateTime now = QDateTime::currentDateTime();
-
-    m_memorySeries->append(now.toMSecsSinceEpoch(), memMB);
-
-    // Keep only last 60 seconds
-    qint64 cutoff = now.addSecs(-60).toMSecsSinceEpoch();
-    while (m_memorySeries->count() > 0 && m_memorySeries->at(0).x() < cutoff)
-        m_memorySeries->removePoints(0, 1);
-
-    m_memoryAxisX->setRange(now.addSecs(-60), now);
-    qreal maxMem = memMB;
-    for (int i = 0; i < m_memorySeries->count(); ++i)
-        if (m_memorySeries->at(i).y() > maxMem) maxMem = m_memorySeries->at(i).y();
-    m_memoryAxisY->setRange(0, qMax(maxMem + 10, 50.0));
-
-    // 2. Network activity
-    qint64 sent = m_server->bytesSent();
-    qint64 recv = m_server->bytesReceived();
-    qint64 total = sent + recv;
-    qreal mbps = (total - (m_lastBytesSent + m_lastBytesReceived)) / (1024.0 * 1024.0); // bytes/s -> MB/s
-    m_lastBytesSent = sent;
-    m_lastBytesReceived = recv;
-
-    m_networkSeries->append(now.toMSecsSinceEpoch(), mbps);
-    while (m_networkSeries->count() > 0 && m_networkSeries->at(0).x() < cutoff)
-        m_networkSeries->removePoints(0, 1);
-
-    m_networkAxisX->setRange(now.addSecs(-60), now);
-    qreal maxNet = mbps;
-    for (int i = 0; i < m_networkSeries->count(); ++i)
-        if (m_networkSeries->at(i).y() > maxNet) maxNet = m_networkSeries->at(i).y();
-    m_networkAxisY->setRange(0, qMax(maxNet + 1.0, 5.0));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-qint64 MainWindow::getProcessMemoryMB()
-{
-#ifdef Q_OS_WIN
-    PROCESS_MEMORY_COUNTERS_EX pmc;
-    if (GetProcessMemoryInfo(GetCurrentProcess(),
-                             (PROCESS_MEMORY_COUNTERS*)&pmc,
-                             sizeof(pmc)))
-    {
-        // PrivateUsage — частный рабочий набор (то, что показывается в диспетчере задач)
-        return static_cast<qint64>(pmc.PrivateUsage / (1024 * 1024));
-    }
-    return 0;
-#else
-    QFile file("/proc/self/status");
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream in(&file);
-        while (!in.atEnd()) {
-            QString line = in.readLine();
-            if (line.startsWith("VmRSS:")) {
-                QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-                if (parts.size() >= 2) {
-                    bool ok;
-                    qint64 kb = parts[1].toLongLong(&ok);
-                    if (ok) return kb / 1024; // KB -> MB
-                }
-            }
-        }
-    }
-    return 0;
-#endif
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 void MainWindow::onBrowse()
 {
     QString dir = QFileDialog::getExistingDirectory(
@@ -706,10 +574,7 @@ void MainWindow::onServerStarted(quint16 port)
     m_bottomToolbar->setStyleSheet(
         "QToolBar#bottomToolbar { background-color: #107C10; }");
 
-    // Start dashboard updates
-    m_lastBytesSent = m_server->bytesSent();
-    m_lastBytesReceived = m_server->bytesReceived();
-    m_dashboardTimer->start(1000);
+    m_dashboard->startUpdates();
 }
 
 void MainWindow::onServerStartFailed(const QString &reason)
@@ -725,7 +590,7 @@ void MainWindow::onServerStartFailed(const QString &reason)
     m_bottomToolbar->setStyleSheet(
         "QToolBar#bottomToolbar { background-color: #E81123; }");
 
-    m_dashboardTimer->stop();
+    m_dashboard->stopUpdates();
 
     if (!reason.isEmpty())
         onLogMessage(reason, "ERROR");
@@ -744,5 +609,5 @@ void MainWindow::onServerStopped()
     m_bottomToolbar->setStyleSheet(
         "QToolBar#bottomToolbar { background-color: #0078D4; }");
 
-    m_dashboardTimer->stop();
+    m_dashboard->stopUpdates();
 }

@@ -59,14 +59,14 @@ private:
         QString               version;
         QMap<QString,QString> headers;
         qint64                contentLength   = 0;
-        QByteArray            body;
+        QByteArray            body;           // used only for non-PUT methods
         bool                  expectContinue  = false;
         bool                  chunked         = false;
         bool                  chunkedComplete = false;
         bool                  chunkedParseError = false;
         bool                  chunkedTooLarge = false;
         QTemporaryFile       *uploadFile      = nullptr;
-        QString               uploadPath;
+        QString               uploadPath;     // final target path (for logging)
         bool                  uploadFailed    = false;
         QQueue<HttpRequest>   requestQueue;
         bool                  streaming       = false;

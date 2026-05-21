@@ -158,7 +158,7 @@ void WebDavWorker::onClientReadyRead()
 
     QByteArray data = socket->readAll();
     m_clients[socket]->buffer += data;
-    addBytesReceived(data.size());
+    addBytesReceived(data.size());   // count received bytes
 
     parseIncoming(socket);
 
@@ -332,7 +332,7 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
             if (expectHeader == "100-continue") {
                 socket->write("HTTP/1.1 100 Continue\r\n\r\n");
                 socket->flush();
-                addBytesSent(23);
+                addBytesSent(23);  // approximate size of 100 Continue response
             }
 
             st->state = WaitingBody;
@@ -509,8 +509,8 @@ void WebDavWorker::executeRequest(QTcpSocket *socket, const HttpRequest &req)
     }
 }
 
-// decodeChunked and decodeChunkedToFile implementations unchanged (omitted for brevity)
-// ... same as before ...
+// ─────────────────────────────────────────────────────────────────────────
+// chunked transfer decoding helpers (unchanged logic, just included for completeness)
 bool WebDavWorker::decodeChunked(ClientState *st)
 {
     st->chunkedParseError = false;
@@ -549,9 +549,6 @@ bool WebDavWorker::decodeChunked(ClientState *st)
         bool ok = false;
         qint64 chunkSize = sizeLine.toLongLong(&ok, 16);
         if (!ok) {
-            emit logMessage(
-                QString("Chunked: invalid size '%1'")
-                    .arg(QString::fromUtf8(sizeLine)), "WARN");
             st->chunkedParseError = true;
             return false;
         }
@@ -592,7 +589,6 @@ bool WebDavWorker::decodeChunked(ClientState *st)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 bool WebDavWorker::decodeChunkedToFile(ClientState *st)
 {
     st->chunkedParseError = false;
@@ -662,14 +658,12 @@ bool WebDavWorker::decodeChunkedToFile(ClientState *st)
         qint64 needed = dataStart + chunkSize + chunkEol;
         if ((qint64)st->buffer.size() < needed) return false;
 
-        // Write chunk to temporary file
         qint64 written = st->uploadFile->write(st->buffer.mid((int)dataStart, (int)chunkSize));
         if (written != chunkSize) {
             st->uploadFailed = true;
             return false;
         }
 
-        // No explicit size limit – limited by disk space.
         st->buffer = st->buffer.mid((int)needed);
     }
 }

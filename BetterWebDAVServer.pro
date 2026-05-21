@@ -8,6 +8,7 @@ TARGET   = BetterWebDAVServer
 TEMPLATE = app
 
 SOURCES += \
+    dashboard.cpp \
     main.cpp         \
     mainwindow.cpp   \
     webdavserver.cpp \
@@ -18,6 +19,7 @@ SOURCES += \
     filestreamer.cpp
 
 HEADERS += \
+    dashboard.h \
     mainwindow.h     \
     webdavserver.h   \
     webdavworker.h   \
