@@ -24,6 +24,8 @@ public:
     qint64  bytesSent();
     qint64  bytesReceived();
 
+    void    setIdleSettings(int timeoutMs, int intervalMs);
+
 signals:
     void logMessage(const QString &message, const QString &level);
     void serverStarted(quint16 port);
@@ -34,6 +36,7 @@ signals:
 
     void _startRequested(const QString &rootPath, quint16 port);
     void _stopRequested();
+    void _setIdleSettings(int timeoutMs, int intervalMs);
 
 private slots:
     void onServerStarted(quint16 port);

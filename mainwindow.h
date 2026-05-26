@@ -11,6 +11,7 @@
 #include <QStackedWidget>
 
 class Monitor;
+class Settings;
 class WebDavServer;
 
 class MainWindow : public QMainWindow
@@ -32,6 +33,7 @@ private slots:
 
     void showMonitor();
     void showLogs();
+    void showSettings();
 
 private:
     void setupTopToolbar();
@@ -51,6 +53,7 @@ private:
     QStackedWidget *m_stack     = nullptr;
     Monitor        *m_monitor   = nullptr;
     QTextEdit      *m_logEdit   = nullptr;
+    Settings       *m_settings  = nullptr;
 
     QToolBar *m_bottomToolbar = nullptr;
     QLabel   *m_statusLabel   = nullptr;

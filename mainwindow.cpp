@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "monitor.h"
+#include "settings.h"
 #include "webdavserver.h"
 
 #include <QApplication>
@@ -48,6 +49,9 @@ MainWindow::MainWindow(QWidget *parent)
     scrollArea->setWidget(m_monitor);
     scrollArea->setFrameShape(QFrame::NoFrame);
 
+    m_settings = new Settings(this);
+    m_settings->setServer(m_server);
+
     setupBottomToolbar();
     applyStyles();
 
@@ -57,10 +61,11 @@ MainWindow::MainWindow(QWidget *parent)
     QApplication::setFont(appFont);
 
     m_stack = new QStackedWidget(this);
-    m_stack->addWidget(scrollArea);   // index 0 – монитор с прокруткой
-    m_stack->addWidget(m_logEdit);    // index 1 – лог
+    m_stack->addWidget(scrollArea);   // index 0 – Monitor
+    m_stack->addWidget(m_logEdit);    // index 1 – Logs
+    m_stack->addWidget(m_settings);   // index 2 – Settings
     setCentralWidget(m_stack);
-    m_stack->setCurrentIndex(0);      // открываем монитор по умолчанию
+    m_stack->setCurrentIndex(0);      // открываем Monitor по умолчанию
 
     onLogMessage("Better WebDAV Server is ready.", "INFO");
     onLogMessage("Set a root directory and click Start.", "INFO");
@@ -90,11 +95,13 @@ void MainWindow::setupTopToolbar()
     QMenu *burgerMenu = new QMenu(m_burgerButton);
     burgerMenu->setObjectName("burgerMenu");
 
-    QAction *monitorAct = burgerMenu->addAction("Monitor");
-    QAction *logAct     = burgerMenu->addAction("Logs");
+    QAction *monitorAct  = burgerMenu->addAction("Monitor");
+    QAction *logAct      = burgerMenu->addAction("Logs");
+    QAction *settingsAct = burgerMenu->addAction("Settings");
 
-    connect(monitorAct, &QAction::triggered, this, &MainWindow::showMonitor);
-    connect(logAct,     &QAction::triggered, this, &MainWindow::showLogs);
+    connect(monitorAct,  &QAction::triggered, this, &MainWindow::showMonitor);
+    connect(logAct,      &QAction::triggered, this, &MainWindow::showLogs);
+    connect(settingsAct, &QAction::triggered, this, &MainWindow::showSettings);
     m_burgerButton->setMenu(burgerMenu);
 
     // ── Path ─────────────────────────────────────────────────────────────────
@@ -485,6 +492,11 @@ void MainWindow::showMonitor()
 void MainWindow::showLogs()
 {
     if (m_stack) m_stack->setCurrentIndex(1);
+}
+
+void MainWindow::showSettings()
+{
+    if (m_stack) m_stack->setCurrentIndex(2);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

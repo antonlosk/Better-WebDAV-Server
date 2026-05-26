@@ -6,6 +6,7 @@
 #include <QTcpSocket>
 #include <QDir>
 #include <QUrl>
+#include <QSettings>
 #include <utility>
 
 namespace {
@@ -16,7 +17,10 @@ constexpr int    MAX_QUEUED_REQUESTS   = 256;
 
 WebDavWorker::WebDavWorker(QObject *parent)
     : QObject(parent)
-{}
+{
+    m_idleTimer = new QTimer(this);
+    connect(m_idleTimer, &QTimer::timeout, this, &WebDavWorker::checkIdleConnections);
+}
 
 WebDavWorker::~WebDavWorker()
 {
@@ -29,6 +33,25 @@ void WebDavWorker::addBytesSent(qint64 bytes) {
 
 void WebDavWorker::addBytesReceived(qint64 bytes) {
     m_bytesReceived.fetchAndAddRelaxed(bytes);
+}
+
+void WebDavWorker::setIdleSettings(int timeoutMs, int intervalMs)
+{
+    m_idleTimeoutMs  = timeoutMs;
+    m_idleIntervalMs = intervalMs;
+
+    if (m_idleTimer->isActive()) {
+        m_idleTimer->setInterval(intervalMs);
+    }
+    emit logMessage(QString("Idle settings updated: timeout=%1 ms, interval=%2 ms")
+                        .arg(timeoutMs).arg(intervalMs), "INFO");
+}
+
+void WebDavWorker::loadIdleSettings()
+{
+    QSettings s;
+    m_idleTimeoutMs  = s.value("idle/timeout",  60).toInt() * 1000;
+    m_idleIntervalMs = s.value("idle/interval", 10).toInt() * 1000;
 }
 
 void WebDavWorker::startServer(const QString &rootPath, quint16 port)
@@ -52,6 +75,9 @@ void WebDavWorker::startServer(const QString &rootPath, quint16 port)
     m_bytesSent.storeRelaxed(0);
     m_bytesReceived.storeRelaxed(0);
 
+    // Загружаем сохранённые настройки idle
+    loadIdleSettings();
+
     m_tcpServer = new QTcpServer(this);
     connect(m_tcpServer, &QTcpServer::newConnection,
             this, &WebDavWorker::onNewConnection);
@@ -70,21 +96,24 @@ void WebDavWorker::startServer(const QString &rootPath, quint16 port)
     emit logMessage(QString("Server started. Root: %1  Port: %2")
                         .arg(m_rootPath).arg(m_port), "INFO");
     emit serverStarted(m_port);
+
+    // Запускаем проверку неактивных соединений с сохранённым интервалом
+    m_idleTimer->start(m_idleIntervalMs);
 }
 
 void WebDavWorker::stopServer()
 {
     if (!m_running) return;
 
-    // 1. Завершаем все активные стримеры, полностью исключая сигналы
+    m_idleTimer->stop();
+
+    // 1. Завершаем все активные стримеры
     QList<FileStreamer*> streamers;
     for (auto it = m_streamerToSocket.begin(); it != m_streamerToSocket.end(); ++it)
         streamers.append(static_cast<FileStreamer*>(it.key()));
 
     for (FileStreamer *streamer : streamers) {
-        // Отключаем все соединения от стримера к воркеру и сокетам
         streamer->disconnect();
-        // Блокируем сигналы на случай, если finish захочет что-то эмитнуть
         streamer->blockSignals(true);
 
         QTcpSocket *socket = m_streamerToSocket.value(streamer);
@@ -92,8 +121,8 @@ void WebDavWorker::stopServer()
             socket->disconnect(streamer);
         }
 
-        streamer->finish(false);   // silent
-        delete streamer;           // мгновенное удаление
+        streamer->finish(false);
+        delete streamer;
     }
     m_streamerToSocket.clear();
 
@@ -104,13 +133,13 @@ void WebDavWorker::stopServer()
         m_tcpServer = nullptr;
     }
 
-    // 3. Закрываем клиентские сокеты, не удаляя их (у них родитель this)
+    // 3. Закрываем клиентские сокеты
     for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
         QTcpSocket *socket = it.key();
         ClientState *st = it.value();
 
-        socket->disconnect();   // все сигналы от сокета
-        socket->close();        // мягкое закрытие, disconnected не вызовется (сигналы отключены)
+        socket->disconnect();
+        socket->close();
 
         if (st->uploadFile) {
             st->uploadFile->close();
@@ -129,8 +158,9 @@ void WebDavWorker::onNewConnection()
 {
     while (m_tcpServer && m_tcpServer->hasPendingConnections()) {
         QTcpSocket *socket = m_tcpServer->nextPendingConnection();
-        socket->setParent(this);   // сокет будет удалён вместе с воркером
+        socket->setParent(this);
         m_clients[socket] = new ClientState();
+        m_clients[socket]->lastActivity.start();
 
         emit clientConnected(socket->peerAddress().toString());
         emit logMessage(QString("[+] Client: %1:%2")
@@ -154,7 +184,6 @@ void WebDavWorker::onClientDisconnected()
                         .arg(socket->peerPort()), "INFO");
     emit clientDisconnected(socket->peerAddress().toString());
 
-    // Завершаем связанные стримеры тихо
     for (auto it = m_streamerToSocket.begin(); it != m_streamerToSocket.end(); ) {
         if (it.value() == socket) {
             FileStreamer *streamer = static_cast<FileStreamer*>(it.key());
@@ -178,7 +207,6 @@ void WebDavWorker::onClientDisconnected()
         delete st;
     }
 
-    // Сокет удалится отложенно или при удалении родителя (this)
     socket->deleteLater();
 }
 
@@ -186,6 +214,8 @@ void WebDavWorker::onClientReadyRead()
 {
     QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket || !m_clients.contains(socket)) return;
+
+    m_clients[socket]->lastActivity.restart();
 
     QByteArray data = socket->readAll();
     m_clients[socket]->buffer += data;
@@ -211,8 +241,24 @@ void WebDavWorker::onStreamFinished()
     streamer->deleteLater();
 }
 
-// ── остальные методы (parseIncoming, decodeChunked, decodeChunkedToFile, executeRequest) остаются неизменными ──
-// (они точно такие же, как в предыдущем полном ответе)
+void WebDavWorker::checkIdleConnections()
+{
+    const qint64 timeoutMs = m_idleTimeoutMs;
+    QList<QTcpSocket*> toClose;
+
+    for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+        ClientState *st = it.value();
+        if (!st->streaming && st->lastActivity.elapsed() > timeoutMs) {
+            toClose.append(it.key());
+        }
+    }
+
+    for (QTcpSocket *socket : toClose) {
+        emit logMessage(QString("Idle timeout, closing connection from %1")
+                            .arg(socket->peerAddress().toString()), "INFO");
+        socket->close();
+    }
+}
 
 void WebDavWorker::parseIncoming(QTcpSocket *socket)
 {
@@ -544,7 +590,6 @@ void WebDavWorker::executeRequest(QTcpSocket *socket, const HttpRequest &req)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
 bool WebDavWorker::decodeChunked(ClientState *st)
 {
     st->chunkedParseError = false;

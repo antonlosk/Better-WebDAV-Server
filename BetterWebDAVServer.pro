@@ -10,6 +10,7 @@ TEMPLATE = app
 SOURCES += \
     main.cpp         \
     mainwindow.cpp   \
+    settings.cpp \
     webdavserver.cpp \
     webdavworker.cpp \
     davhandlers.cpp  \
@@ -20,6 +21,7 @@ SOURCES += \
 
 HEADERS += \
     mainwindow.h     \
+    settings.h \
     webdavserver.h   \
     webdavworker.h   \
     davhandlers.h    \

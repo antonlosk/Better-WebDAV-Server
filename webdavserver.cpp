@@ -44,6 +44,10 @@ WebDavServer::WebDavServer(QObject *parent)
             m_worker, &WebDavWorker::stopServer,
             Qt::QueuedConnection);
 
+    connect(this,     &WebDavServer::_setIdleSettings,
+            m_worker, &WebDavWorker::setIdleSettings,
+            Qt::QueuedConnection);
+
     m_thread->setObjectName("WebDAV-Worker");
     m_thread->start();
 }
@@ -105,6 +109,11 @@ qint64 WebDavServer::bytesSent()
 qint64 WebDavServer::bytesReceived()
 {
     return m_worker ? m_worker->bytesReceived() : 0;
+}
+
+void WebDavServer::setIdleSettings(int timeoutMs, int intervalMs)
+{
+    emit _setIdleSettings(timeoutMs, intervalMs);
 }
 
 void WebDavServer::onServerStarted(quint16 port)
