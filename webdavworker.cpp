@@ -6,7 +6,7 @@
 #include <QTcpSocket>
 #include <QDir>
 #include <QUrl>
-#include <QAtomicInteger>
+#include <utility>
 
 namespace {
 constexpr qint64 MAX_HEADER_BYTES      = 64 * 1024;
@@ -76,24 +76,49 @@ void WebDavWorker::stopServer()
 {
     if (!m_running) return;
 
+    // 1. Завершаем все активные стримеры, полностью исключая сигналы
+    QList<FileStreamer*> streamers;
+    for (auto it = m_streamerToSocket.begin(); it != m_streamerToSocket.end(); ++it)
+        streamers.append(static_cast<FileStreamer*>(it.key()));
+
+    for (FileStreamer *streamer : streamers) {
+        // Отключаем все соединения от стримера к воркеру и сокетам
+        streamer->disconnect();
+        // Блокируем сигналы на случай, если finish захочет что-то эмитнуть
+        streamer->blockSignals(true);
+
+        QTcpSocket *socket = m_streamerToSocket.value(streamer);
+        if (socket) {
+            socket->disconnect(streamer);
+        }
+
+        streamer->finish(false);   // silent
+        delete streamer;           // мгновенное удаление
+    }
+    m_streamerToSocket.clear();
+
+    // 2. Останавливаем слушающий сокет
     if (m_tcpServer) {
         m_tcpServer->close();
         delete m_tcpServer;
         m_tcpServer = nullptr;
     }
 
+    // 3. Закрываем клиентские сокеты, не удаляя их (у них родитель this)
     for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
-        it.key()->blockSignals(true);
-        it.key()->abort();
-        it.key()->deleteLater();
-        if (it.value()->uploadFile) {
-            it.value()->uploadFile->close();
-            delete it.value()->uploadFile;
+        QTcpSocket *socket = it.key();
+        ClientState *st = it.value();
+
+        socket->disconnect();   // все сигналы от сокета
+        socket->close();        // мягкое закрытие, disconnected не вызовется (сигналы отключены)
+
+        if (st->uploadFile) {
+            st->uploadFile->close();
+            delete st->uploadFile;
         }
-        delete it.value();
+        delete st;
     }
     m_clients.clear();
-    m_streamerToSocket.clear();
 
     m_running = false;
     emit logMessage("Server stopped.", "INFO");
@@ -104,7 +129,8 @@ void WebDavWorker::onNewConnection()
 {
     while (m_tcpServer && m_tcpServer->hasPendingConnections()) {
         QTcpSocket *socket = m_tcpServer->nextPendingConnection();
-        m_clients[socket]  = new ClientState();
+        socket->setParent(this);   // сокет будет удалён вместе с воркером
+        m_clients[socket] = new ClientState();
 
         emit clientConnected(socket->peerAddress().toString());
         emit logMessage(QString("[+] Client: %1:%2")
@@ -121,33 +147,38 @@ void WebDavWorker::onNewConnection()
 void WebDavWorker::onClientDisconnected()
 {
     QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
-    if (!socket) return;
+    if (!socket || !m_clients.contains(socket)) return;
 
     emit logMessage(QString("[-] Client: %1:%2")
                         .arg(socket->peerAddress().toString())
                         .arg(socket->peerPort()), "INFO");
     emit clientDisconnected(socket->peerAddress().toString());
 
-    for (auto it = m_streamerToSocket.begin();
-         it != m_streamerToSocket.end(); )
-    {
-        if (it.value() == socket)
+    // Завершаем связанные стримеры тихо
+    for (auto it = m_streamerToSocket.begin(); it != m_streamerToSocket.end(); ) {
+        if (it.value() == socket) {
+            FileStreamer *streamer = static_cast<FileStreamer*>(it.key());
             it = m_streamerToSocket.erase(it);
-        else
+
+            streamer->disconnect();
+            streamer->blockSignals(true);
+            streamer->finish(false);
+            delete streamer;
+        } else {
             ++it;
+        }
     }
 
-    if (m_clients.contains(socket)) {
-        ClientState *st = m_clients[socket];
+    ClientState *st = m_clients.take(socket);
+    if (st) {
         if (st->uploadFile) {
             st->uploadFile->close();
             delete st->uploadFile;
-            st->uploadFile = nullptr;
         }
         delete st;
-        m_clients.remove(socket);
     }
 
+    // Сокет удалится отложенно или при удалении родителя (this)
     socket->deleteLater();
 }
 
@@ -158,7 +189,7 @@ void WebDavWorker::onClientReadyRead()
 
     QByteArray data = socket->readAll();
     m_clients[socket]->buffer += data;
-    addBytesReceived(data.size());   // count received bytes
+    addBytesReceived(data.size());
 
     parseIncoming(socket);
 
@@ -168,16 +199,20 @@ void WebDavWorker::onClientReadyRead()
 
 void WebDavWorker::onStreamFinished()
 {
-    QObject *streamer = sender();
+    FileStreamer *streamer = qobject_cast<FileStreamer*>(sender());
     if (!streamer) return;
 
     QTcpSocket *socket = m_streamerToSocket.take(streamer);
-    if (!socket || !m_clients.contains(socket)) return;
+    if (socket && m_clients.contains(socket)) {
+        m_clients[socket]->streaming = false;
+        dispatchNext(socket);
+    }
 
-    m_clients[socket]->streaming = false;
-
-    dispatchNext(socket);
+    streamer->deleteLater();
 }
+
+// ── остальные методы (parseIncoming, decodeChunked, decodeChunkedToFile, executeRequest) остаются неизменными ──
+// (они точно такие же, как в предыдущем полном ответе)
 
 void WebDavWorker::parseIncoming(QTcpSocket *socket)
 {
@@ -220,10 +255,10 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
                                      ? headerBlock.left(firstLF).trimmed()
                                      : headerBlock.trimmed();
 
-            QList<QByteArray> partsRaw = reqLine.split(' ');
+            const QList<QByteArray> partsRaw = reqLine.split(' ');
             QList<QByteArray> parts;
             parts.reserve(partsRaw.size());
-            for (const QByteArray &p : partsRaw) {
+            for (const QByteArray &p : std::as_const(partsRaw)) {
                 if (!p.trimmed().isEmpty()) parts.append(p.trimmed());
             }
 
@@ -332,7 +367,7 @@ void WebDavWorker::parseIncoming(QTcpSocket *socket)
             if (expectHeader == "100-continue") {
                 socket->write("HTTP/1.1 100 Continue\r\n\r\n");
                 socket->flush();
-                addBytesSent(23);  // approximate size of 100 Continue response
+                addBytesSent(23);
             }
 
             st->state = WaitingBody;
@@ -509,8 +544,7 @@ void WebDavWorker::executeRequest(QTcpSocket *socket, const HttpRequest &req)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// chunked transfer decoding helpers (unchanged logic, just included for completeness)
+// ─────────────────────────────────────────────────────────────────
 bool WebDavWorker::decodeChunked(ClientState *st)
 {
     st->chunkedParseError = false;

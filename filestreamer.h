@@ -6,6 +6,7 @@
 #include <QMap>
 #include <QString>
 #include <QByteArray>
+#include <QPointer>
 
 class WebDavWorker;
 
@@ -14,8 +15,8 @@ class FileStreamer : public QObject
     Q_OBJECT
 
 public:
-    static constexpr qint64 CHUNK_SIZE          = 256 * 1024;  // 256 KB
-    static constexpr qint64 SOCKET_BUFFER_LIMIT = 4 * CHUNK_SIZE; // 1 MB
+    static constexpr qint64 CHUNK_SIZE          = 256 * 1024;
+    static constexpr qint64 SOCKET_BUFFER_LIMIT = 4 * CHUNK_SIZE;
 
     static FileStreamer *create(
         QTcpSocket                  *socket,
@@ -28,13 +29,16 @@ public:
         bool                         keepAlive,
         WebDavWorker                *worker);
 
+    void finish(bool ok);   // больше НЕ делает deleteLater
+
 signals:
-    void finished();  // file fully sent and socket buffer is empty
-    void failed();    // I/O error or socket disconnected
+    void finished();
+    void failed();
 
 private slots:
     void onBytesWritten(qint64 bytes);
     void onSocketDisconnected();
+    void onSocketDestroyed();
 
 private:
     explicit FileStreamer(
@@ -47,13 +51,12 @@ private:
         QObject       *parent = nullptr);
 
     void sendNextChunk();
-    void finish(bool ok);
 
-    QTcpSocket   *m_socket;
-    QFile         m_file;
-    qint64        m_remaining;      // bytes left to send from file
-    bool          m_keepAlive;
-    WebDavWorker *m_worker;
-    bool          m_fileDone = false; // whole file read and queued in buffer
-    bool          m_done     = false; // finish() already called
+    QPointer<QTcpSocket> m_socket;
+    QFile                 m_file;
+    qint64                m_remaining;
+    bool                  m_keepAlive;
+    WebDavWorker         *m_worker;
+    bool                  m_fileDone = false;
+    bool                  m_done     = false;
 };

@@ -6,9 +6,8 @@ CONFIG += c++17
 
 TARGET   = BetterWebDAVServer
 TEMPLATE = app
-
+#RC_ICONS = icons/icon.ico
 SOURCES += \
-    dashboard.cpp \
     main.cpp         \
     mainwindow.cpp   \
     webdavserver.cpp \
@@ -16,17 +15,18 @@ SOURCES += \
     davhandlers.cpp  \
     davutils.cpp     \
     httputils.cpp    \
-    filestreamer.cpp
+    filestreamer.cpp \
+    monitor.cpp
 
 HEADERS += \
-    dashboard.h \
     mainwindow.h     \
     webdavserver.h   \
     webdavworker.h   \
     davhandlers.h    \
     davutils.h       \
     httputils.h      \
-    filestreamer.h
+    filestreamer.h   \
+    monitor.h
 
 win32 {
     VERSION = 1.0.0.0

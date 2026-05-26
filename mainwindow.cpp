@@ -1,5 +1,5 @@
 #include "mainwindow.h"
-#include "dashboard.h"
+#include "monitor.h"
 #include "webdavserver.h"
 
 #include <QApplication>
@@ -38,14 +38,14 @@ MainWindow::MainWindow(QWidget *parent)
     setupTopToolbar();
     setupLogPage();
 
-    m_dashboard = new Dashboard(this);
-    m_dashboard->setServer(m_server);
-    m_dashboard->setMinimumHeight(800);   // чтобы графики не сжимались
+    m_monitor = new Monitor(this);
+    m_monitor->setServer(m_server);
+    m_monitor->setMinimumHeight(800);   // чтобы графики не сжимались
 
-    // Обернём дашборд в QScrollArea
+    // Обернём монитор в QScrollArea
     QScrollArea *scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
-    scrollArea->setWidget(m_dashboard);
+    scrollArea->setWidget(m_monitor);
     scrollArea->setFrameShape(QFrame::NoFrame);
 
     setupBottomToolbar();
@@ -57,10 +57,10 @@ MainWindow::MainWindow(QWidget *parent)
     QApplication::setFont(appFont);
 
     m_stack = new QStackedWidget(this);
-    m_stack->addWidget(scrollArea);   // index 0 – дашборд с прокруткой
+    m_stack->addWidget(scrollArea);   // index 0 – монитор с прокруткой
     m_stack->addWidget(m_logEdit);    // index 1 – лог
     setCentralWidget(m_stack);
-    m_stack->setCurrentIndex(0);      // открываем дашборд по умолчанию
+    m_stack->setCurrentIndex(0);      // открываем монитор по умолчанию
 
     onLogMessage("Better WebDAV Server is ready.", "INFO");
     onLogMessage("Set a root directory and click Start.", "INFO");
@@ -90,11 +90,11 @@ void MainWindow::setupTopToolbar()
     QMenu *burgerMenu = new QMenu(m_burgerButton);
     burgerMenu->setObjectName("burgerMenu");
 
-    QAction *dashAct = burgerMenu->addAction("Dashboard");
-    QAction *logAct  = burgerMenu->addAction("Logs");
+    QAction *monitorAct = burgerMenu->addAction("Monitor");
+    QAction *logAct     = burgerMenu->addAction("Logs");
 
-    connect(dashAct, &QAction::triggered, this, &MainWindow::showDashboard);
-    connect(logAct,  &QAction::triggered, this, &MainWindow::showLogs);
+    connect(monitorAct, &QAction::triggered, this, &MainWindow::showMonitor);
+    connect(logAct,     &QAction::triggered, this, &MainWindow::showLogs);
     m_burgerButton->setMenu(burgerMenu);
 
     // ── Path ─────────────────────────────────────────────────────────────────
@@ -477,7 +477,7 @@ QLabel#statusRight {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-void MainWindow::showDashboard()
+void MainWindow::showMonitor()
 {
     if (m_stack) m_stack->setCurrentIndex(0);
 }
@@ -574,7 +574,7 @@ void MainWindow::onServerStarted(quint16 port)
     m_bottomToolbar->setStyleSheet(
         "QToolBar#bottomToolbar { background-color: #107C10; }");
 
-    m_dashboard->startUpdates();
+    m_monitor->startUpdates();
 }
 
 void MainWindow::onServerStartFailed(const QString &reason)
@@ -590,7 +590,7 @@ void MainWindow::onServerStartFailed(const QString &reason)
     m_bottomToolbar->setStyleSheet(
         "QToolBar#bottomToolbar { background-color: #E81123; }");
 
-    m_dashboard->stopUpdates();
+    m_monitor->stopUpdates();
 
     if (!reason.isEmpty())
         onLogMessage(reason, "ERROR");
@@ -609,5 +609,5 @@ void MainWindow::onServerStopped()
     m_bottomToolbar->setStyleSheet(
         "QToolBar#bottomToolbar { background-color: #0078D4; }");
 
-    m_dashboard->stopUpdates();
+    m_monitor->stopUpdates();
 }

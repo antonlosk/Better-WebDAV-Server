@@ -10,7 +10,7 @@
 #include <QSpinBox>
 #include <QStackedWidget>
 
-class Dashboard;
+class Monitor;
 class WebDavServer;
 
 class MainWindow : public QMainWindow
@@ -30,7 +30,7 @@ private slots:
     void onServerStartFailed(const QString &reason);
     void onServerStopped();
 
-    void showDashboard();
+    void showMonitor();
     void showLogs();
 
 private:
@@ -49,7 +49,7 @@ private:
     QToolButton *m_btnMenu      = nullptr;
 
     QStackedWidget *m_stack     = nullptr;
-    Dashboard      *m_dashboard = nullptr;
+    Monitor        *m_monitor   = nullptr;
     QTextEdit      *m_logEdit   = nullptr;
 
     QToolBar *m_bottomToolbar = nullptr;
