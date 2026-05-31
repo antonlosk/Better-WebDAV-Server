@@ -5,36 +5,59 @@
 #include <QFormLayout>
 #include <QMessageBox>
 #include <QSettings>
+#include <QGroupBox>
 
 Settings::Settings(QWidget *parent) : QWidget(parent)
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(20, 20, 20, 20);
-    mainLayout->setSpacing(12);
+    mainLayout->setSpacing(16);
 
-    QLabel *titleLabel = new QLabel("Keep‑Alive Connection Settings");
-    titleLabel->setStyleSheet("font-size: 14pt; font-weight: bold; color: #0078D4;");
-    mainLayout->addWidget(titleLabel);
+    // ── Keep-Alive Settings ──────────────────────────────────────────────
+    QGroupBox *keepAliveGroup = new QGroupBox("Keep‑Alive Connection Settings");
+    keepAliveGroup->setStyleSheet(
+        "QGroupBox { font-weight: bold; border: 1px solid #CCCCCC; border-radius: 4px; margin-top: 8px; padding-top: 12px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
+        );
 
-    QFormLayout *formLayout = new QFormLayout();
-    formLayout->setSpacing(10);
+    QFormLayout *keepAliveLayout = new QFormLayout(keepAliveGroup);
+    keepAliveLayout->setSpacing(10);
 
     m_timeoutSpinBox = new QSpinBox();
-    m_timeoutSpinBox->setRange(5, 3600);          // от 5 секунд до 1 часа
-    m_timeoutSpinBox->setValue(60);               // по умолчанию 60 секунд
+    m_timeoutSpinBox->setRange(5, 3600);
+    m_timeoutSpinBox->setValue(60);
     m_timeoutSpinBox->setSuffix(" sec");
     m_timeoutSpinBox->setToolTip("Idle timeout before closing the connection");
-    formLayout->addRow("Idle Timeout:", m_timeoutSpinBox);
+    keepAliveLayout->addRow("Idle Timeout:", m_timeoutSpinBox);
 
     m_intervalSpinBox = new QSpinBox();
-    m_intervalSpinBox->setRange(1, 600);          // от 1 до 600 секунд
-    m_intervalSpinBox->setValue(10);               // по умолчанию 10 секунд
+    m_intervalSpinBox->setRange(1, 600);
+    m_intervalSpinBox->setValue(10);
     m_intervalSpinBox->setSuffix(" sec");
     m_intervalSpinBox->setToolTip("How often to check for idle connections");
-    formLayout->addRow("Check Interval:", m_intervalSpinBox);
+    keepAliveLayout->addRow("Check Interval:", m_intervalSpinBox);
 
-    mainLayout->addLayout(formLayout);
+    mainLayout->addWidget(keepAliveGroup);
 
+    // ── Customization ─────────────────────────────────────────────────────
+    QGroupBox *customizationGroup = new QGroupBox("Customization");
+    customizationGroup->setStyleSheet(
+        "QGroupBox { font-weight: bold; border: 1px solid #CCCCCC; border-radius: 4px; margin-top: 8px; padding-top: 12px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
+        );
+
+    QFormLayout *customLayout = new QFormLayout(customizationGroup);
+    customLayout->setSpacing(10);
+
+    m_themeCombo = new QComboBox();
+    m_themeCombo->addItem("System", "System");
+    m_themeCombo->addItem("Dark",   "Dark");
+    m_themeCombo->addItem("Light",  "Light");
+    customLayout->addRow("Theme:", m_themeCombo);
+
+    mainLayout->addWidget(customizationGroup);
+
+    // ── Apply Button ──────────────────────────────────────────────────────
     QPushButton *applyButton = new QPushButton("Apply");
     applyButton->setStyleSheet(
         "QPushButton {"
@@ -53,7 +76,7 @@ Settings::Settings(QWidget *parent) : QWidget(parent)
 
     mainLayout->addStretch();
 
-    // Загружаем сохранённые настройки при создании
+    // Загружаем сохранённые значения
     loadSettings();
 }
 
@@ -65,10 +88,13 @@ void Settings::setServer(WebDavServer *server)
 void Settings::loadSettings()
 {
     QSettings s;
-    int timeout  = s.value("idle/timeout", 60).toInt();
-    int interval = s.value("idle/interval", 10).toInt();
-    m_timeoutSpinBox->setValue(timeout);
-    m_intervalSpinBox->setValue(interval);
+    m_timeoutSpinBox->setValue(s.value("idle/timeout", 60).toInt());
+    m_intervalSpinBox->setValue(s.value("idle/interval", 10).toInt());
+
+    QString theme = s.value("theme/name", "System").toString();
+    int idx = m_themeCombo->findData(theme);
+    if (idx >= 0)
+        m_themeCombo->setCurrentIndex(idx);
 }
 
 void Settings::saveSettings()
@@ -76,24 +102,27 @@ void Settings::saveSettings()
     QSettings s;
     s.setValue("idle/timeout",  m_timeoutSpinBox->value());
     s.setValue("idle/interval", m_intervalSpinBox->value());
+    s.setValue("theme/name",    m_themeCombo->currentData().toString());
 }
 
 void Settings::applySettings()
 {
-    if (!m_server) {
-        m_statusLabel->setText("Server is not running.");
-        return;
-    }
-
-    int timeoutSec  = m_timeoutSpinBox->value();
-    int intervalSec = m_intervalSpinBox->value();
-
-    // Сохраняем в постоянное хранилище
+    // Сохраняем все значения в постоянное хранилище
     saveSettings();
 
-    // Передаём работающему серверу
-    m_server->setIdleSettings(timeoutSec * 1000, intervalSec * 1000);
+    // Применяем тайм-ауты, только если сервер запущен
+    if (m_server) {
+        int timeoutSec  = m_timeoutSpinBox->value();
+        int intervalSec = m_intervalSpinBox->value();
+        m_server->setIdleSettings(timeoutSec * 1000, intervalSec * 1000);
+    }
 
-    m_statusLabel->setText(QString("Settings applied: timeout = %1 sec, check every %2 sec.")
-                               .arg(timeoutSec).arg(intervalSec));
+    // Применяем тему в любом случае (интерфейс не зависит от состояния сервера)
+    QString theme = m_themeCombo->currentData().toString();
+    emit themeChanged(theme);
+
+    m_statusLabel->setText(QString("Settings applied: timeout = %1 sec, check every %2 sec, theme = %3.")
+                               .arg(m_timeoutSpinBox->value())
+                               .arg(m_intervalSpinBox->value())
+                               .arg(theme));
 }

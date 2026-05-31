@@ -9,6 +9,9 @@
 #include <QToolButton>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QVector>
+#include <QPair>
+#include <QDateTime>
 
 class Monitor;
 class Settings;
@@ -35,11 +38,24 @@ private slots:
     void showLogs();
     void showSettings();
 
+    void onThemeChanged(const QString &theme);
+
 private:
     void setupTopToolbar();
     void setupLogPage();
     void setupBottomToolbar();
-    void applyStyles();
+    void loadTheme();
+    void applyTheme(const QString &theme);
+    void refreshLog();   // пересоздаёт лог с цветами текущей темы
+
+    static QString lightStyleSheet();
+    static QString darkStyleSheet();
+
+    struct LogEntry {
+        QString timestamp;
+        QString level;
+        QString msg;
+    };
 
     QToolBar    *m_topToolbar   = nullptr;
     QToolButton *m_burgerButton = nullptr;
@@ -60,4 +76,7 @@ private:
 
     WebDavServer *m_server = nullptr;
     bool m_serverRunning = false;
+    bool m_darkMode      = false;
+
+    QVector<LogEntry> m_logEntries;
 };

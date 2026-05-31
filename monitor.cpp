@@ -30,6 +30,7 @@ Monitor::Monitor(QWidget *parent)
     setupUi();
     m_timer = new QTimer(this);
     connect(m_timer, &QTimer::timeout, this, &Monitor::updateCharts);
+    setDarkMode(false); // initial light theme
 }
 
 Monitor::~Monitor() {}
@@ -42,7 +43,6 @@ void Monitor::startUpdates()
     m_lastBytesSent     = m_server->bytesSent();
     m_lastBytesReceived = m_server->bytesReceived();
 
-    // Save initial process times and wall‑time
 #ifdef Q_OS_WIN
     FILETIME create, exit, kernel, user;
     if (GetProcessTimes(GetCurrentProcess(), &create, &exit, &kernel, &user)) {
@@ -66,6 +66,50 @@ void Monitor::startUpdates()
 
 void Monitor::stopUpdates() { m_timer->stop(); }
 
+void Monitor::setDarkMode(bool dark)
+{
+    m_darkMode = dark;
+
+    QColor bgColor   = dark ? QColor(30, 30, 30)   : Qt::white;
+    QColor textColor = dark ? QColor(220, 220, 220) : Qt::black;
+    QColor gridColor = dark ? QColor(60, 60, 60)    : QColor(200, 200, 200);
+    QBrush bgBrush(bgColor);
+
+    QList<QChart*> charts = { m_cpuChart, m_memoryChart, m_networkChart };
+
+    for (QChart *chart : charts) {
+        if (!chart) continue;
+        chart->setBackgroundBrush(bgBrush);
+        chart->setBackgroundRoundness(0);
+
+        QFont titleFont = chart->titleFont();
+        titleFont.setPixelSize(14);
+        chart->setTitleFont(titleFont);
+        chart->setTitleBrush(QBrush(textColor));
+
+        // Legend: only update text color; background and border remain transparent/invisible
+        if (chart->legend()) {
+            chart->legend()->setLabelColor(textColor);
+        }
+
+        for (QAbstractAxis *axis : chart->axes()) {
+            axis->setTitleBrush(QBrush(textColor));
+            axis->setLabelsColor(textColor);
+            if (auto *valueAxis = dynamic_cast<QValueAxis*>(axis)) {
+                valueAxis->setGridLineColor(gridColor);
+                valueAxis->setLinePenColor(textColor);
+            } else if (auto *dateAxis = dynamic_cast<QDateTimeAxis*>(axis)) {
+                dateAxis->setGridLineColor(gridColor);
+                dateAxis->setLinePenColor(textColor);
+            }
+        }
+    }
+
+    for (auto *view : { m_cpuChartView, m_memoryChartView, m_networkChartView }) {
+        if (view) view->repaint();
+    }
+}
+
 // ---------------------------------------------------------------------------
 void Monitor::setupUi()
 {
@@ -75,13 +119,16 @@ void Monitor::setupUi()
 
     // ── CPU chart ────────────────────────────────────────────────────────
     m_cpuChart = new QChart();
-    m_cpuChart->setTitle("CPU Usage (process)");
+    m_cpuChart->setTitle("CPU Usage");
     m_cpuChart->legend()->setVisible(true);
     m_cpuChart->legend()->setAlignment(Qt::AlignBottom);
+    // Remove legend border and background
+    m_cpuChart->legend()->setBackgroundVisible(false);
+    m_cpuChart->legend()->setBorderColor(Qt::transparent);
 
     m_cpuSeries = new QLineSeries();
     m_cpuSeries->setName("CPU");
-    m_cpuSeries->setColor(QColor(232, 17, 35));   // #E81123
+    m_cpuSeries->setColor(QColor(232, 17, 35));
     m_cpuSeries->setPen(QPen(QColor(232, 17, 35), 2));
     m_cpuChart->addSeries(m_cpuSeries);
 
@@ -92,7 +139,7 @@ void Monitor::setupUi()
     m_cpuSeries->attachAxis(m_cpuAxisX);
 
     m_cpuAxisY = new QValueAxis();
-    m_cpuAxisY->setTitleText("% of all CPUs");
+    m_cpuAxisY->setTitleText("");
     m_cpuAxisY->setRange(0, 100);
     m_cpuAxisY->setLabelFormat("%.1f");
     m_cpuChart->addAxis(m_cpuAxisY, Qt::AlignLeft);
@@ -104,9 +151,11 @@ void Monitor::setupUi()
 
     // ── Memory chart ─────────────────────────────────────────────────────
     m_memoryChart = new QChart();
-    m_memoryChart->setTitle("Memory Usage (MB)");
+    m_memoryChart->setTitle("Memory Usage");
     m_memoryChart->legend()->setVisible(true);
     m_memoryChart->legend()->setAlignment(Qt::AlignBottom);
+    m_memoryChart->legend()->setBackgroundVisible(false);
+    m_memoryChart->legend()->setBorderColor(Qt::transparent);
 
     m_memorySeries = new QLineSeries();
     m_memorySeries->setName("RAM");
@@ -121,7 +170,7 @@ void Monitor::setupUi()
     m_memorySeries->attachAxis(m_memoryAxisX);
 
     m_memoryAxisY = new QValueAxis();
-    m_memoryAxisY->setTitleText("MB");
+    m_memoryAxisY->setTitleText("");
     m_memoryAxisY->setLabelFormat("%.1f");
     m_memoryChart->addAxis(m_memoryAxisY, Qt::AlignLeft);
     m_memorySeries->attachAxis(m_memoryAxisY);
@@ -132,9 +181,11 @@ void Monitor::setupUi()
 
     // ── Network chart ────────────────────────────────────────────────────
     m_networkChart = new QChart();
-    m_networkChart->setTitle("Network Activity (MB/s)");
+    m_networkChart->setTitle("Network Activity");
     m_networkChart->legend()->setVisible(true);
     m_networkChart->legend()->setAlignment(Qt::AlignBottom);
+    m_networkChart->legend()->setBackgroundVisible(false);
+    m_networkChart->legend()->setBorderColor(Qt::transparent);
 
     m_inboundSeries = new QLineSeries();
     m_inboundSeries->setName("Download");
@@ -156,7 +207,7 @@ void Monitor::setupUi()
     m_outboundSeries->attachAxis(m_networkAxisX);
 
     m_networkAxisY = new QValueAxis();
-    m_networkAxisY->setTitleText("MB/s");
+    m_networkAxisY->setTitleText("");
     m_networkAxisY->setLabelFormat("%.2f");
     m_networkChart->addAxis(m_networkAxisY, Qt::AlignLeft);
     m_inboundSeries->attachAxis(m_networkAxisY);
@@ -197,9 +248,7 @@ double Monitor::getCpuUsagePercent()
 
     if (wallDelta == 0) return 0.0;
 
-    // Percent of a single core
     double percentSingleCore = 100.0 * procDelta / wallDelta;
-    // Convert to percentage of total capacity of all cores (as in Task Manager)
     return percentSingleCore / m_coreCount;
 #else
     struct tms t;
@@ -227,7 +276,7 @@ void Monitor::updateCharts()
     QDateTime now = QDateTime::currentDateTime();
     qint64 cutoff = now.addSecs(-60).toMSecsSinceEpoch();
 
-    // ── 1. CPU (process) ─────────────────────────────────────────────────
+    // 1. CPU
     double cpuPercent = getCpuUsagePercent();
     m_cpuSeries->append(now.toMSecsSinceEpoch(), cpuPercent);
     while (m_cpuSeries->count() > 0 && m_cpuSeries->at(0).x() < cutoff)
@@ -236,7 +285,7 @@ void Monitor::updateCharts()
     m_cpuAxisY->setRange(0, 100);
     m_cpuSeries->setName(QString("CPU: %1%").arg(cpuPercent, 0, 'f', 1));
 
-    // ── 2. Memory ────────────────────────────────────────────────────────
+    // 2. Memory
     qreal memMB = getProcessMemoryMB();
     m_memorySeries->append(now.toMSecsSinceEpoch(), memMB);
     while (m_memorySeries->count() > 0 && m_memorySeries->at(0).x() < cutoff)
@@ -248,7 +297,7 @@ void Monitor::updateCharts()
     m_memoryAxisY->setRange(0, qMax(maxMem + 10, 50.0));
     m_memorySeries->setName(QString("RAM: %1 MB").arg(memMB, 0, 'f', 1));
 
-    // ── 3. Network ───────────────────────────────────────────────────────
+    // 3. Network
     qint64 bytesSent     = m_server->bytesSent();
     qint64 bytesReceived = m_server->bytesReceived();
     qreal downloadRate = (bytesReceived - m_lastBytesReceived) / (1024.0 * 1024.0);

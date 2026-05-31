@@ -26,12 +26,14 @@ public:
 
     static qint64 getProcessMemoryMB();
 
+    void setDarkMode(bool dark);   // переключает оформление графиков
+
 private slots:
     void updateCharts();
 
 private:
     void setupUi();
-    double getCpuUsagePercent();   // CPU usage of the process (0..100% of all cores)
+    double getCpuUsagePercent();   // возвращает загрузку CPU в % (0..100)
 
     // CPU chart
     QChartView    *m_cpuChartView = nullptr;
@@ -61,7 +63,9 @@ private:
     qint64 m_lastBytesSent     = 0;
     qint64 m_lastBytesReceived = 0;
 
-    // Data for CPU calculation
+    bool m_darkMode = false;   // текущий режим
+
+    // Данные для подсчёта CPU
 #ifdef Q_OS_WIN
     ULARGE_INTEGER m_prevProcKernelTime{};
     ULARGE_INTEGER m_prevProcUserTime{};

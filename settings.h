@@ -4,6 +4,7 @@
 #include <QSpinBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QComboBox>
 
 class WebDavServer;
 
@@ -14,15 +15,19 @@ public:
     explicit Settings(QWidget *parent = nullptr);
 
     void setServer(WebDavServer *server);
-    void loadSettings();   // загрузить сохранённые значения в поля ввода
-    void saveSettings();   // сохранить текущие значения
+    void loadSettings();
+    void saveSettings();
+
+signals:
+    void themeChanged(const QString &theme);
 
 private slots:
     void applySettings();
 
 private:
-    QSpinBox *m_timeoutSpinBox;   // секунды
-    QSpinBox *m_intervalSpinBox;  // секунды
-    QLabel   *m_statusLabel;
+    QSpinBox   *m_timeoutSpinBox;
+    QSpinBox   *m_intervalSpinBox;
+    QLabel     *m_statusLabel;
+    QComboBox  *m_themeCombo;
     WebDavServer *m_server = nullptr;
 };
