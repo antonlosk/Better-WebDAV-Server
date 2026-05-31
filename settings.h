@@ -23,6 +23,7 @@ signals:
 
 private slots:
     void applySettings();
+    void resetToDefaults();
 
 private:
     QSpinBox   *m_timeoutSpinBox;

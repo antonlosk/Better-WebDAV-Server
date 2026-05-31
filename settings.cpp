@@ -6,6 +6,7 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QGroupBox>
+#include <QHBoxLayout>
 
 Settings::Settings(QWidget *parent) : QWidget(parent)
 {
@@ -57,7 +58,10 @@ Settings::Settings(QWidget *parent) : QWidget(parent)
 
     mainLayout->addWidget(customizationGroup);
 
-    // ── Apply Button ──────────────────────────────────────────────────────
+    // ── Buttons ───────────────────────────────────────────────────────────
+    QHBoxLayout *buttonLayout = new QHBoxLayout();
+    buttonLayout->setSpacing(10);
+
     QPushButton *applyButton = new QPushButton("Apply");
     applyButton->setStyleSheet(
         "QPushButton {"
@@ -68,7 +72,23 @@ Settings::Settings(QWidget *parent) : QWidget(parent)
         "QPushButton:pressed { background-color: #005A9E; }"
         );
     connect(applyButton, &QPushButton::clicked, this, &Settings::applySettings);
-    mainLayout->addWidget(applyButton, 0, Qt::AlignLeft);
+
+    QPushButton *resetButton = new QPushButton("Reset");
+    resetButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #E1E1E1; color: #000000; border: 1px solid #CCCCCC; border-radius: 4px;"
+        "  padding: 8px 24px; font-size: 10pt;"
+        "}"
+        "QPushButton:hover { background-color: #D1D1D1; }"
+        "QPushButton:pressed { background-color: #C8C8C8; }"
+        );
+    connect(resetButton, &QPushButton::clicked, this, &Settings::resetToDefaults);
+
+    buttonLayout->addWidget(applyButton);
+    buttonLayout->addWidget(resetButton);
+    buttonLayout->addStretch();
+
+    mainLayout->addLayout(buttonLayout);
 
     m_statusLabel = new QLabel("");
     m_statusLabel->setStyleSheet("color: #107C10; font-style: italic;");
@@ -125,4 +145,16 @@ void Settings::applySettings()
                                .arg(m_timeoutSpinBox->value())
                                .arg(m_intervalSpinBox->value())
                                .arg(theme));
+}
+
+void Settings::resetToDefaults()
+{
+    // Сбрасываем поля к значениям по умолчанию без сохранения и применения
+    m_timeoutSpinBox->setValue(60);
+    m_intervalSpinBox->setValue(10);
+    int idx = m_themeCombo->findData("System");
+    if (idx >= 0)
+        m_themeCombo->setCurrentIndex(idx);
+
+    m_statusLabel->setText("Settings have been reset to defaults. Press Apply to save and apply.");
 }
