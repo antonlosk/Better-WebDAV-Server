@@ -1,0 +1,29 @@
+{{define "content"}}
+<h1 style="margin-bottom: 32px;">Settings</h1>
+{{if .Message}}
+<div class="alert info">
+    <span class="material-symbols-rounded">info</span> {{.Message}}
+</div>
+{{end}}
+<div class="card max-w-600">
+    <form method="POST">
+        {{.CSRFField}}
+        <div class="form-group">
+            <label>Shared Path (Directory)</label>
+            <input type="text" name="shared_path" value="{{.Config.SharedPath}}" required>
+        </div>
+        <div class="form-group">
+            <label>WebDAV Port</label>
+            <input type="number" name="webdav_port" value="{{.Config.WebDAVPort}}" required>
+        </div>
+        <div class="form-group">
+            <label>Web Interface Port</label>
+            <input type="number" name="web_ui_port" value="{{.Config.WebUIPort}}" required>
+            <small><span class="material-symbols-rounded" style="font-size: 14px;">warning</span> Changing UI port requires manual application restart.</small>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top: 16px;">
+            <span class="material-symbols-rounded">save</span> Save Settings
+        </button>
+    </form>
+</div>
+{{end}}

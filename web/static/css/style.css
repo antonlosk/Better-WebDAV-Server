@@ -1,0 +1,223 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+
+:root {
+    /* Поддержка системного скроллбара и инпутов для обеих тем */
+    color-scheme: light dark;
+
+    /* ========================================= */
+    /* MD3 LIGHT THEME (Светлая тема)            */
+    /* ========================================= */
+    --md-primary: #6750A4;
+    --md-on-primary: #FFFFFF;
+    --md-primary-container: #EADDFF;
+    --md-on-primary-container: #21005D;
+    
+    --md-secondary: #625B71;
+    --md-on-secondary: #FFFFFF;
+    --md-secondary-container: #E8DEF8;
+    --md-on-secondary-container: #1D192B;
+    
+    --md-error: #BA1A1A;
+    --md-on-error: #FFFFFF;
+    --md-error-container: #FFDAD6;
+    --md-on-error-container: #410002;
+    
+    --md-success: #146c2e;
+    --md-on-success: #ffffff;
+    --md-success-container: #c4eed0;
+    --md-on-success-container: #00210a;
+
+    --md-warning: #8d4f00;
+    --md-warning-container: #ffdcbe;
+    --md-on-warning-container: #2c1600;
+
+    --md-background: #FEF7FF;
+    --md-on-background: #1D1B20;
+    --md-surface: #FEF7FF;
+    --md-on-surface: #1D1B20;
+    --md-surface-variant: #E7E0EC;
+    --md-on-surface-variant: #49454F;
+    --md-outline: #79747E;
+    
+    --md-surface-container-low: #F7F2FA;
+    --md-surface-container: #F3EDF7;
+    --md-surface-container-high: #ECE6F0;
+}
+
+/* ========================================= */
+/* MD3 DARK THEME (Тёмная тема)              */
+/* ========================================= */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --md-primary: #D0BCFF;
+        --md-on-primary: #381E72;
+        --md-primary-container: #4F378B;
+        --md-on-primary-container: #EADDFF;
+        
+        --md-secondary: #CCC2DC;
+        --md-on-secondary: #332D41;
+        --md-secondary-container: #4A4458;
+        --md-on-secondary-container: #E8DEF8;
+        
+        --md-error: #FFB4AB;
+        --md-on-error: #690005;
+        --md-error-container: #93000A;
+        --md-on-error-container: #FFDAD6;
+        
+        --md-success: #8DD09C;
+        --md-on-success: #00391C;
+        --md-success-container: #00522A;
+        --md-on-success-container: #A8ECAA;
+
+        --md-warning: #FFB870;
+        --md-warning-container: #663900;
+        --md-on-warning-container: #FFDCBE;
+
+        --md-background: #141218;
+        --md-on-background: #E6E0E9;
+        --md-surface: #141218;
+        --md-on-surface: #E6E0E9;
+        --md-surface-variant: #49454F;
+        --md-on-surface-variant: #CAC4D0;
+        --md-outline: #938F99;
+        
+        --md-surface-container-low: #1D1B20;
+        --md-surface-container: #211F26;
+        --md-surface-container-high: #2B2930;
+    }
+}
+
+/* ========================================= */
+/* БАЗОВЫЕ СТИЛИ                             */
+/* ========================================= */
+* { box-sizing: border-box; font-family: 'Roboto', sans-serif; }
+
+/* Основной layout */
+body { margin: 0; background: var(--md-background); color: var(--md-on-background); display: flex; min-height: 100vh; }
+
+/* Тексты и Ссылки */
+h1 { font-size: 2.25rem; font-weight: 400; margin-top: 0; color: var(--md-on-background); letter-spacing: 0px; }
+h2 { font-size: 1.5rem; font-weight: 400; margin-top: 0; color: var(--md-on-surface); }
+h3 { font-size: 1.25rem; font-weight: 500; margin-top: 0; color: var(--md-on-surface); }
+
+a { color: var(--md-primary); text-decoration: none; transition: color 0.2s ease; }
+a:hover { color: var(--md-on-primary-container); text-decoration: underline; }
+
+/* Иконки */
+.material-symbols-rounded { vertical-align: middle; margin-right: 8px; font-size: 1.25rem; }
+
+/* Макет Админки */
+.center-body { justify-content: center; align-items: center; background: var(--md-surface-container-low); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+.main-content { flex: 1; padding: 40px; overflow-y: auto; background: var(--md-background); width: 100%; }
+
+/* Sidebar */
+.sidebar { width: 280px; background: var(--md-surface-container-low); padding: 24px 16px; border-right: 1px solid var(--md-surface-container-high); flex-shrink: 0; }
+.sidebar h2 { padding: 0 16px 20px; font-weight: 500; color: var(--md-primary); margin-bottom: 10px; display: flex; align-items: center; }
+.sidebar ul { list-style: none; padding: 0; margin: 0; }
+.sidebar ul li { margin-bottom: 4px; }
+.sidebar ul li a, .logout-btn { 
+    display: flex; align-items: center; width: 100%; padding: 16px; 
+    color: var(--md-on-surface-variant); text-decoration: none; font-weight: 500; 
+    border-radius: 100px; 
+    transition: all 0.2s ease; border: none; background: none; font-size: 1rem; cursor: pointer;
+}
+.sidebar ul li a:hover, .logout-btn:hover { background: var(--md-surface-container-high); color: var(--md-on-surface); text-decoration: none; }
+.text-danger { color: var(--md-error) !important; }
+.logout-btn:hover { background: var(--md-error-container); color: var(--md-on-error-container); }
+
+/* Cards */
+.card { 
+    background: var(--md-surface-container-low); padding: 24px; 
+    border-radius: 24px; 
+    margin-bottom: 24px;
+    border: 1px solid var(--md-surface-container-high);
+    overflow-x: auto; 
+}
+.auth-card { width: 100%; max-width: 440px; background: var(--md-surface); box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin: 16px; }
+
+/* Buttons */
+.btn { 
+    padding: 10px 24px; border: none; border-radius: 100px; cursor: pointer; 
+    font-weight: 500; text-decoration: none; display: inline-flex; align-items: center; 
+    justify-content: center; transition: all 0.2s ease; font-size: 0.875rem; letter-spacing: 0.1px;
+}
+.btn:hover { opacity: 0.9; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-decoration: none; }
+.btn-sm { padding: 8px 16px; font-size: 0.875rem; }
+.btn-primary { background: var(--md-primary); color: var(--md-on-primary); }
+.btn-success { background: var(--md-success); color: var(--md-on-success); }
+.btn-danger { background: var(--md-error); color: var(--md-on-error); }
+.btn-warning { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.w-100 { width: 100%; }
+
+/* Inputs & Forms */
+.form-group { margin-bottom: 20px; width: 100%; }
+.form-group label { display: block; margin-bottom: 8px; font-size: 0.875rem; font-weight: 500; color: var(--md-on-surface-variant); }
+input[type="text"], input[type="password"], input[type="number"] { 
+    width: 100%; padding: 16px; 
+    background: var(--md-surface-container-high); border: 1px solid transparent; 
+    border-radius: 12px; font-size: 1rem; color: var(--md-on-surface);
+    transition: all 0.2s ease;
+}
+input:focus { outline: none; border-color: var(--md-primary); background: var(--md-surface); box-shadow: 0 0 0 1px var(--md-primary); }
+.max-w-600 { max-width: 600px; }
+small { color: var(--md-on-surface-variant); display: block; margin-top: 8px; font-size: 0.75rem; line-height: 1.4; }
+
+/* Badges / Chips */
+.badge { padding: 6px 12px; border-radius: 8px; font-size: 0.875rem; font-weight: 500; display: inline-flex; align-items: center; white-space: nowrap; }
+.bg-success { background: var(--md-success-container); color: var(--md-on-success-container); }
+.bg-danger { background: var(--md-error-container); color: var(--md-on-error-container); }
+.bg-warning { background: var(--md-warning-container); color: var(--md-on-warning-container); }
+.bg-info { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+
+/* Tables */
+.table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 600px; }
+.table th, .table td { padding: 16px; text-align: left; border-bottom: 1px solid var(--md-surface-container-high); }
+.table th { color: var(--md-on-surface-variant); font-weight: 500; font-size: 0.875rem; white-space: nowrap;}
+.table tr:last-child td { border-bottom: none; }
+.table tr:hover td { background: var(--md-surface-container); }
+
+/* Alerts */
+.alert { padding: 16px; border-radius: 16px; margin-bottom: 24px; display: flex; align-items: center; line-height: 1.4; }
+.alert.error { background: var(--md-error-container); color: var(--md-on-error-container); }
+.alert.info { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+
+/* ========================================= */
+/* WEBDAV EXPLORER SPECIFIC STYLES           */
+/* ========================================= */
+.explorer-container { width: 100%; max-width: 1000px; margin: 40px auto; padding: 0 24px; }
+.explorer-header { display: flex; align-items: center; margin-bottom: 32px; gap: 16px; }
+.explorer-header h2 { font-size: 2rem; margin: 0; word-break: break-all; line-height: 1.2; }
+.link-flex { display: flex; align-items: center; gap: 12px; font-weight: 500; }
+.link-flex .material-symbols-rounded { flex-shrink: 0; font-size: 24px; }
+.file-icon { color: var(--md-secondary); }
+.meta-text { color: var(--md-on-surface-variant); font-size: 0.875rem; white-space: nowrap; }
+
+/* ========================================= */
+/* АДАПТИВНОСТЬ (МОБИЛЬНЫЕ УСТРОЙСТВА)       */
+/* ========================================= */
+@media (max-width: 768px) {
+    body { flex-direction: column; }
+    
+    .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--md-surface-container-high); padding: 16px; }
+    .sidebar h2 { justify-content: center; padding: 0 0 16px 0; border-bottom: 1px solid var(--md-surface-container-high); }
+    .sidebar ul { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; }
+    .sidebar ul li { margin-bottom: 0; flex: 1 1 auto; }
+    .sidebar ul li a, .logout-btn { justify-content: center; padding: 12px; font-size: 0.875rem; white-space: nowrap; }
+    
+    .main-content { padding: 20px 16px; }
+    h1 { font-size: 1.75rem; margin-bottom: 24px !important; }
+    
+    .grid { grid-template-columns: 1fr; gap: 16px; }
+    .card { padding: 16px; border-radius: 16px; margin-bottom: 16px; }
+    .auth-card { padding: 24px 16px; }
+    
+    .form-group { margin-bottom: 16px; }
+    input[type="text"], input[type="password"], input[type="number"] { padding: 14px; }
+
+    .explorer-container { margin: 16px auto; padding: 0 16px; }
+    .explorer-header { margin-bottom: 24px; gap: 12px; }
+    .explorer-header h2 { font-size: 1.5rem; }
+    .explorer-header .material-symbols-rounded { font-size: 32px !important; }
+    .table th, .table td { padding: 12px 8px; }
+}

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Index of {{.Path}}</title>
+    <!-- Google Fonts & Material Symbols -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" rel="stylesheet" />
+    
+    <!-- Подключаем единый CSS-файл -->
+    <link rel="stylesheet" href="/static/web/static/css/style.css">
+</head>
+<body style="display: block;">
+    <div class="explorer-container">
+        
+        <div class="explorer-header">
+            <span class="material-symbols-rounded" style="font-size: 40px;">cloud</span>
+            <h2>Index of {{.Path}}</h2>
+        </div>
+
+        <div class="card">
+            <table class="table">
+                <tr>
+                    <th>Name</th>
+                    <th>Size</th>
+                    <th>Last Modified</th>
+                </tr>
+                
+                {{if ne .Path "/"}}
+                <tr>
+                    <td>
+                        <a href="../" class="link-flex">
+                            <span class="material-symbols-rounded">arrow_upward</span> .. (Parent Directory)
+                        </a>
+                    </td>
+                    <td class="meta-text">-</td>
+                    <td class="meta-text">-</td>
+                </tr>
+                {{end}}
+                
+                {{range .Items}}
+                <tr>
+                    <td>
+                        <a href="{{.URL}}" class="link-flex">
+                            <span class="material-symbols-rounded {{.IconClass}}">{{.Icon}}</span> {{.Name}}
+                        </a>
+                    </td>
+                    <td class="meta-text">{{.Size}}</td>
+                    <td class="meta-text">{{.ModTime}}</td>
+                </tr>
+                {{end}}
+            </table>
+        </div>
+        
+    </div>
+</body>
+</html>

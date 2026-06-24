@@ -1,0 +1,44 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; flex-wrap: wrap; gap: 16px;">
+    <h1 style="margin: 0;">System Logs</h1>
+    <div style="display: flex; gap: 16px;">
+        <a href="?action=download" class="btn btn-primary">
+            <span class="material-symbols-rounded">download</span> Download
+        </a>
+        <form method="POST" action="?action=clear" style="margin: 0;" onsubmit="return confirm('Clear all logs? This cannot be undone.');">
+            {{.CSRFField}}
+            <button type="submit" class="btn btn-warning">
+                <span class="material-symbols-rounded">delete_sweep</span> Clear
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="form-group" style="margin-bottom: 24px;">
+        <input type="text" id="logSearch" placeholder="🔍 Search logs by keyword..." style="background: var(--md-background);">
+    </div>
+    <table class="table" id="logsTable">
+        <tr>
+            <th>Time</th>
+            <th>Level</th>
+            <th>Message</th>
+        </tr>
+        {{range .Logs}}
+        <tr>
+            <td style="white-space:nowrap; color: var(--md-on-surface-variant); font-size: 0.875rem;">{{.CreatedAt}}</td>
+            <td>
+                <span class="badge {{if eq .Level `ERROR`}}bg-danger{{else if eq .Level `WARNING`}}bg-warning{{else}}bg-info{{end}}">
+                    {{.Level}}
+                </span>
+            </td>
+            <td>{{.Message}}</td>
+        </tr>
+        {{end}}
+    </table>
+</div>
+
+<script>
+    setTimeout(() => { window.location.reload(); }, 15000);
+</script>
+{{end}}

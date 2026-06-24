@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Initial Setup</title>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/web/static/css/style.css">
+</head>
+<body class="center-body">
+    <div class="card auth-card">
+        <div style="text-align: center; margin-bottom: 24px;">
+            <span class="material-symbols-rounded" style="font-size: 48px; color: var(--md-primary);">admin_panel_settings</span>
+            <h2 style="margin-top: 16px;">Initial Setup</h2>
+            <p style="color: var(--md-on-surface-variant); margin: 0;">Create the admin account to get started.</p>
+        </div>
+        <form method="POST">
+            {{.CSRFField}}
+            <div class="form-group">
+                <label>Admin Login</label>
+                <input type="text" name="username" placeholder="admin" required>
+            </div>
+            <div class="form-group">
+                <label>Admin Password</label>
+                <input type="password" name="password" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="btn btn-primary w-100" style="margin-top: 16px;">
+                <span class="material-symbols-rounded">person_add</span> Create Admin
+            </button>
+        </form>
+    </div>
+</body>
+</html>

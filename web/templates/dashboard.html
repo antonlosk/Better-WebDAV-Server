@@ -1,0 +1,55 @@
+{{define "content"}}
+<h1 style="margin-bottom: 32px;">Dashboard</h1>
+<div class="grid">
+    <div class="card">
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+            <span class="material-symbols-rounded" style="font-size: 2rem; color: var(--md-primary); margin-right: 12px;">router</span>
+            <h3 style="margin: 0;">Server Status</h3>
+        </div>
+        <p style="display: flex; align-items: center; justify-content: space-between;">
+            <strong style="color: var(--md-on-surface-variant);">WebDAV State:</strong> 
+            <span class="badge {{if eq .Status `Running`}}bg-success{{else}}bg-danger{{end}}">
+                <span class="material-symbols-rounded" style="font-size: 16px; margin-right: 4px;">power_settings_new</span> {{.Status}}
+            </span>
+        </p>
+        <p style="display: flex; justify-content: space-between;">
+            <strong style="color: var(--md-on-surface-variant);">Port:</strong> 
+            <span style="font-weight: 500;">{{.Config.WebDAVPort}}</span>
+        </p>
+        <p style="display: flex; justify-content: space-between;">
+            <strong style="color: var(--md-on-surface-variant);">Shared Path:</strong> 
+            <span style="font-weight: 500; font-family: monospace;">{{.Config.SharedPath}}</span>
+        </p>
+        <p style="display: flex; justify-content: space-between;">
+            <strong style="color: var(--md-on-surface-variant);">Active Users:</strong> 
+            <span style="font-weight: 500;">{{.UserCount}}</span>
+        </p>
+        <p style="display: flex; justify-content: space-between;">
+            <strong style="color: var(--md-on-surface-variant);">Uptime:</strong> 
+            <span style="font-weight: 500;">{{.Uptime}}</span>
+        </p>
+    </div>
+    
+    <div class="card">
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+            <span class="material-symbols-rounded" style="font-size: 2rem; color: var(--md-primary); margin-right: 12px;">tune</span>
+            <h3 style="margin: 0;">Quick Controls</h3>
+        </div>
+        <form method="POST" action="/api/control" style="display: flex; gap: 16px; flex-direction: column;">
+            {{.CSRFField}}
+            {{if eq .Status `Stopped`}}
+                <button name="action" value="start" class="btn btn-success w-100">
+                    <span class="material-symbols-rounded">play_arrow</span> Start Server
+                </button>
+            {{else}}
+                <button name="action" value="stop" class="btn btn-danger w-100">
+                    <span class="material-symbols-rounded">stop</span> Stop Server
+                </button>
+                <button name="action" value="restart" class="btn btn-warning w-100">
+                    <span class="material-symbols-rounded">refresh</span> Restart Server
+                </button>
+            {{end}}
+        </form>
+    </div>
+</div>
+{{end}}

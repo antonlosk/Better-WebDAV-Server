@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Better WebDAV Server</title>
+    <!-- MD3 Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/web/static/css/style.css">
+</head>
+<body>
+    <div class="sidebar">
+        <h2>
+            <span class="material-symbols-rounded" style="font-size: 1.5rem; color: var(--md-primary);">cloud_sync</span>
+            Better WebDAV
+        </h2>
+        <ul>
+            <li><a href="/"><span class="material-symbols-rounded">dashboard</span> Dashboard</a></li>
+            <li><a href="/settings"><span class="material-symbols-rounded">settings</span> Settings</a></li>
+            <li><a href="/users"><span class="material-symbols-rounded">group</span> Users</a></li>
+            <li><a href="/logs"><span class="material-symbols-rounded">receipt_long</span> Logs</a></li>
+            <li style="margin-top: 20px;">
+                <form method="POST" action="/logout" style="margin: 0;">
+                    {{.CSRFField}}
+                    <button type="submit" class="logout-btn text-danger">
+                        <span class="material-symbols-rounded">logout</span> Logout
+                    </button>
+                </form>
+            </li>
+        </ul>
+    </div>
+    <div class="main-content">
+        {{template "content" .}}
+    </div>
+    <script src="/static/web/static/js/main.js"></script>
+</body>
+</html>
