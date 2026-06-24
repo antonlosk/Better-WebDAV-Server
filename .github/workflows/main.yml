@@ -1,0 +1,79 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Calculate Next Version
+        id: version
+        run: |
+          # Get the latest tag, default to v0.0.0 if none exists
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          
+          # Remove the 'v' prefix for calculation
+          VERSION=${LATEST_TAG#v}
+          
+          # Split into MAJOR, MINOR, PATCH
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
+          # Increment patch
+          PATCH=$((PATCH + 1))
+          
+          # Logic: After 10, roll over to the next tier
+          if [ "$PATCH" -gt 10 ]; then
+            PATCH=0
+            MINOR=$((MINOR + 1))
+          fi
+          
+          if [ "$MINOR" -gt 10 ]; then
+            MINOR=0
+            MAJOR=$((MAJOR + 1))
+          fi
+          
+          NEXT_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Next version will be: $NEXT_VERSION"
+          
+          # Save to output for subsequent steps
+          echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.4'
+
+      - name: Build Optimized Windows Executable
+        run: |
+          # Initialize Go modules
+          if [ ! -f go.mod ]; then
+            go mod init betterwebdav
+          fi
+          go mod tidy
+          
+          # Build the project
+          # IMPORTANT: We use "." instead of "main.go" so the compiler includes rsrc.syso
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-s -w" \
+            -trimpath \
+            -o BetterWebDAVServer_${{ steps.version.outputs.version }}.exe .
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create a new release and upload the executable asset
+          gh release create ${{ steps.version.outputs.version }} \
+            BetterWebDAVServer_${{ steps.version.outputs.version }}.exe \
+            --title "Release ${{ steps.version.outputs.version }}" \
+            --generate-notes
