@@ -8,10 +8,12 @@ import (
 	"context"
 	"fmt"
 	"html/template"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +27,17 @@ var (
 	startTime  time.Time
 	serverDone chan struct{}
 )
+
+type webdavLogFilter struct{}
+
+func (f *webdavLogFilter) Write(p []byte) (n int, err error) {
+	msg := string(p)
+	if strings.Contains(msg, "superfluous response.WriteHeader") {
+		return len(p), nil
+	}
+	logs.Log("WARNING", "Internal HTTP Server: "+strings.TrimSpace(msg))
+	return len(p), nil
+}
 
 func Status() (string, string) {
 	mu.Lock()
@@ -52,10 +65,6 @@ func StartServer() error {
 	}
 
 	mux := http.NewServeMux()
-
-	// ==============================================================
-	// ИСПРАВЛЕНИЕ: Раздаем встроенный CSS для страницы WebDAV!
-	// ==============================================================
 	mux.Handle("/static/web/", http.StripPrefix("/static/web/", http.FileServer(http.FS(web.FS))))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +84,7 @@ func StartServer() error {
 
 		if !auth.AuthenticateWebDAV(user, pass) {
 			auth.RecordFailedLogin(ip, "WebDAV")
-			logs.Log("WARNING", fmt.Sprintf("Failed WebDAV auth attempt from %s", ip))
+			logs.Log("WARNING", fmt.Sprintf("Failed WebDAV auth attempt from IP: %s", ip))
 			w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV Server"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -83,29 +92,55 @@ func StartServer() error {
 
 		auth.ResetLoginAttempts(ip)
 
+		// ==========================================
+		// ЕДИНООБРАЗНОЕ ЛОГИРОВАНИЕ
+		// ==========================================
 		if r.Method == "PUT" {
-			logs.Log("INFO", fmt.Sprintf("File uploaded: %s by %s", r.URL.Path, user))
+			logs.Log("INFO", fmt.Sprintf("Upload started: %s by %s (IP: %s)", r.URL.Path, user, ip))
+			defer func() {
+				logs.Log("INFO", fmt.Sprintf("Upload finished: %s by %s (IP: %s)", r.URL.Path, user, ip))
+			}()
 		} else if r.Method == "DELETE" {
-			logs.Log("INFO", fmt.Sprintf("Resource deleted: %s by %s", r.URL.Path, user))
+			logs.Log("INFO", fmt.Sprintf("Resource deleted: %s by %s (IP: %s)", r.URL.Path, user, ip))
+		} else if r.Method == "MKCOL" {
+			logs.Log("INFO", fmt.Sprintf("Directory created: %s by %s (IP: %s)", r.URL.Path, user, ip))
+		} else if r.Method == "MOVE" {
+			dest := r.Header.Get("Destination")
+			if u, err := url.Parse(dest); err == nil {
+				dest = u.Path
+			}
+			logs.Log("INFO", fmt.Sprintf("Resource moved/renamed: %s -> %s by %s (IP: %s)", r.URL.Path, dest, user, ip))
 		}
 
 		if r.Method == http.MethodGet {
 			ctx := context.Background()
 			fInfo, err := fs.FileSystem.Stat(ctx, r.URL.Path)
-			if err == nil && fInfo.IsDir() {
-				if len(r.URL.Path) > 0 && r.URL.Path[len(r.URL.Path)-1] != '/' {
-					http.Redirect(w, r, r.URL.Path+"/", http.StatusFound)
+			if err == nil {
+				if fInfo.IsDir() {
+					if len(r.URL.Path) > 0 && r.URL.Path[len(r.URL.Path)-1] != '/' {
+						http.Redirect(w, r, r.URL.Path+"/", http.StatusFound)
+						return
+					}
+					serveDirectoryListing(w, r, fs.FileSystem, r.URL.Path)
 					return
+				} else {
+					// Скачивание файла: теперь тоже с логированием начала и конца!
+					logs.Log("INFO", fmt.Sprintf("Download started: %s by %s (IP: %s)", r.URL.Path, user, ip))
+					defer func() {
+						logs.Log("INFO", fmt.Sprintf("Download finished: %s by %s (IP: %s)", r.URL.Path, user, ip))
+					}()
 				}
-				serveDirectoryListing(w, r, fs.FileSystem, r.URL.Path)
-				return
 			}
 		}
 
 		fs.ServeHTTP(w, r)
 	})
 
-	server = &http.Server{Addr: ":" + cfg.WebDAVPort, Handler: mux}
+	server = &http.Server{
+		Addr:     ":" + cfg.WebDAVPort,
+		Handler:  mux,
+		ErrorLog: log.New(&webdavLogFilter{}, "", 0),
+	}
 
 	ln, err := net.Listen("tcp", server.Addr)
 	if err != nil {
