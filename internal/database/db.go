@@ -3,8 +3,9 @@ package database
 import (
 	"database/sql"
 	"log"
-	_ "modernc.org/sqlite"
 	"os"
+
+	_ "modernc.org/sqlite"
 )
 
 var DB *sql.DB
@@ -12,10 +13,19 @@ var DB *sql.DB
 func InitDB() {
 	var err error
 	os.MkdirAll("data", 0755)
-	DB, err = sql.Open("sqlite", "data/storage.db")
+	
+	// Включаем режим WAL (позволяет одновременно читать и писать) 
+	// и устанавливаем busy_timeout в 5000мс. Если база заблокирована, 
+	// запрос подождет до 5 секунд вместо того, чтобы сразу упасть.
+	DB, err = sql.Open("sqlite", "data/storage.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
+
+	// ЖЕСТКОЕ ОГРАНИЧЕНИЕ: для SQLite в Go лучше всего ограничить количество 
+	// открытых соединений до 1. Это заставит Go выстраивать все параллельные 
+	// запросы (логи, авторизацию и т.д.) в очередь, полностью исключая ошибку SQLITE_BUSY.
+	DB.SetMaxOpenConns(1)
 
 	createTables := `
 	CREATE TABLE IF NOT EXISTS admin_users (
