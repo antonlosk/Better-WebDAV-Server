@@ -28,6 +28,34 @@ var (
 	serverDone chan struct{}
 )
 
+// safeResponseWriter предотвращает панику и ошибки двойной записи заголовков (superfluous WriteHeader),
+// если Java-клиент обрывает соединение раньше времени.
+type safeResponseWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+	mu          sync.Mutex
+}
+
+func (w *safeResponseWriter) WriteHeader(code int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *safeResponseWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		w.ResponseWriter.WriteHeader(http.StatusOK)
+	}
+	w.mu.Unlock()
+	return w.ResponseWriter.Write(b)
+}
+
 type webdavLogFilter struct{}
 
 func (f *webdavLogFilter) Write(p []byte) (n int, err error) {
@@ -92,10 +120,15 @@ func StartServer() error {
 
 		auth.ResetLoginAttempts(ip)
 
-		// ==========================================
-		// ЕДИНООБРАЗНОЕ ЛОГИРОВАНИЕ
-		// ==========================================
+		// Оборачиваем Writer для защиты от обрывов связи клиентом
+		sw := &safeResponseWriter{ResponseWriter: w}
+
 		if r.Method == "PUT" {
+			// ИСПРАВЛЕНИЕ: Принудительно отключаем Keep-Alive для тяжелых загрузок.
+			// Это заставляет Java/Android клиенты закрывать сессию корректно и спасает от ошибки "interrupted".
+			r.Header.Set("Connection", "close")
+			sw.Header().Set("Connection", "close")
+
 			logs.Log("INFO", fmt.Sprintf("Upload started: %s by %s (IP: %s)", r.URL.Path, user, ip))
 			defer func() {
 				logs.Log("INFO", fmt.Sprintf("Upload finished: %s by %s (IP: %s)", r.URL.Path, user, ip))
@@ -118,13 +151,12 @@ func StartServer() error {
 			if err == nil {
 				if fInfo.IsDir() {
 					if len(r.URL.Path) > 0 && r.URL.Path[len(r.URL.Path)-1] != '/' {
-						http.Redirect(w, r, r.URL.Path+"/", http.StatusFound)
+						http.Redirect(sw, r, r.URL.Path+"/", http.StatusFound)
 						return
 					}
-					serveDirectoryListing(w, r, fs.FileSystem, r.URL.Path)
+					serveDirectoryListing(sw, r, fs.FileSystem, r.URL.Path)
 					return
 				} else {
-					// Скачивание файла: теперь тоже с логированием начала и конца!
 					logs.Log("INFO", fmt.Sprintf("Download started: %s by %s (IP: %s)", r.URL.Path, user, ip))
 					defer func() {
 						logs.Log("INFO", fmt.Sprintf("Download finished: %s by %s (IP: %s)", r.URL.Path, user, ip))
@@ -133,7 +165,8 @@ func StartServer() error {
 			}
 		}
 
-		fs.ServeHTTP(w, r)
+		// Передаем безопасный Writer в стандартный обработчик
+		fs.ServeHTTP(sw, r)
 	})
 
 	server = &http.Server{
@@ -151,12 +184,12 @@ func StartServer() error {
 	status = "Running"
 	startTime = time.Now()
 	serverDone = make(chan struct{})
-	
+
 	logs.Log("INFO", "WebDAV Server started on port "+cfg.WebDAVPort+" mapping to "+cfg.SharedPath)
 
 	go func() {
-		defer close(serverDone) 
-		
+		defer close(serverDone)
+
 		err := server.Serve(ln)
 
 		mu.Lock()
@@ -177,16 +210,16 @@ func StopServer() {
 		mu.Unlock()
 		return
 	}
-	
+
 	srv := server
-	done := serverDone 
+	done := serverDone
 	mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	srv.Shutdown(ctx)
-	<-done 
+	<-done
 
 	logs.Log("INFO", "WebDAV Server stopped")
 }
