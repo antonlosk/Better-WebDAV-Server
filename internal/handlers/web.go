@@ -17,11 +17,61 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/gorilla/sessions"
+	"github.com/shirou/gopsutil/v3/disk" // НОВАЯ БИБЛИОТЕКА
 )
 
 var store *sessions.CookieStore
+
+var (
+	loginAttempts = make(map[string]int)
+	lockoutTimes  = make(map[string]time.Time)
+	loginMu       sync.Mutex
+)
+
+func isLockedOut(ip string) bool {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	
+	if lockoutTime, exists := lockoutTimes[ip]; exists {
+		if time.Now().Before(lockoutTime) {
+			return true
+		}
+		delete(lockoutTimes, ip)
+		delete(loginAttempts, ip)
+	}
+	return false
+}
+
+func recordFailedLogin(ip string) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	
+	loginAttempts[ip]++
+	if loginAttempts[ip] >= 5 {
+		lockoutTimes[ip] = time.Now().Add(5 * time.Minute)
+		logs.Log("WARNING", "Brute-force protection: IP blocked for 5 minutes - "+ip)
+	}
+}
+
+func resetLoginAttempts(ip string) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	
+	delete(loginAttempts, ip)
+	delete(lockoutTimes, ip)
+}
+
+func getClientIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
 
 func initSessionStore() {
 	keyPath := "data/session.key"
@@ -205,10 +255,9 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := auth.GetClientIP(r)
+	ip := getClientIP(r)
 
-	// ИСПОЛЬЗУЕМ ГЛОБАЛЬНЫЙ RATE LIMITER
-	if auth.IsLockedOut(ip) {
+	if isLockedOut(ip) {
 		renderStandalone(w, r, "login", map[string]interface{}{"Error": "Too many failed attempts. Try again in 5 minutes."})
 		return
 	}
@@ -217,7 +266,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		user, pass := r.FormValue("username"), r.FormValue("password")
 
 		if auth.AuthenticateAdmin(user, pass) {
-			auth.ResetLoginAttempts(ip) // Сброс глобального счетчика
+			resetLoginAttempts(ip) 
 
 			session, _ := store.Get(r, "admin-session")
 			session.Values["authenticated"] = true
@@ -231,7 +280,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		auth.RecordFailedLogin(ip, "Web UI") // Запись неудачи
+		recordFailedLogin(ip) 
 		logs.Log("WARNING", fmt.Sprintf("Failed admin login attempt from IP: %s", ip))
 		renderStandalone(w, r, "login", map[string]interface{}{"Error": "Invalid credentials"})
 		return
@@ -254,20 +303,59 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
+// Вспомогательная функция для форматирования байтов (KB, MB, GB, TB)
+func formatBytes(bytes uint64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := uint64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
 func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
 	status, uptime := webdav.Status()
+	cfg := config.GetConfig()
+
 	var userCount int
 	if err := database.DB.QueryRow("SELECT COUNT(*) FROM webdav_users").Scan(&userCount); err != nil {
 		logs.Log("ERROR", "Failed to count users: "+err.Error())
 	}
 
+	// ПОЛУЧЕНИЕ ИНФОРМАЦИИ О ДИСКЕ
+	diskTotal, diskFree, diskUsed, diskPercentStr := "Unknown", "Unknown", "Unknown", "0.0"
+	diskPercentRaw := 0.0
+
+	usage, err := disk.Usage(cfg.SharedPath)
+	if err == nil {
+		diskTotal = formatBytes(usage.Total)
+		diskFree = formatBytes(usage.Free)
+		diskUsed = formatBytes(usage.Used)
+		diskPercentRaw = usage.UsedPercent
+		diskPercentStr = fmt.Sprintf("%.1f", usage.UsedPercent)
+	} else {
+		// Если папка не существует или недоступна, залогируем ошибку
+		logs.Log("WARNING", "Failed to get disk usage for "+cfg.SharedPath+": "+err.Error())
+	}
+
 	data := map[string]interface{}{
-		"Status": status, "Uptime": uptime,
-		"Config": config.GetConfig(), "UserCount": userCount,
+		"Status":         status,
+		"Uptime":         uptime,
+		"Config":         cfg,
+		"UserCount":      userCount,
+		"DiskTotal":      diskTotal,
+		"DiskFree":       diskFree,
+		"DiskUsed":       diskUsed,
+		"DiskPercent":    diskPercentStr,
+		"DiskPercentRaw": diskPercentRaw,
 	}
 	renderTemplate(w, r, "dashboard", data)
 }
@@ -341,7 +429,6 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 		if action == "add" {
 			u, p := r.FormValue("username"), r.FormValue("password")
 			
-			// Считываем состояние чекбоксов из формы (по умолчанию 0)
 			upInt, delInt := 0, 0
 			if r.FormValue("can_upload") == "on" { upInt = 1 }
 			if r.FormValue("can_delete") == "on" { delInt = 1 }

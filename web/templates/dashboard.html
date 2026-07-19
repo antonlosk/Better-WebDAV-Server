@@ -29,6 +29,27 @@
             <span style="font-weight: 500;">{{.Uptime}}</span>
         </p>
     </div>
+
+    <!-- НОВАЯ КАРТОЧКА: МОНИТОРИНГ ДИСКА -->
+    <div class="card">
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+            <span class="material-symbols-rounded" style="font-size: 2rem; color: var(--md-primary); margin-right: 12px;">storage</span>
+            <h3 style="margin: 0;">Storage Usage</h3>
+        </div>
+        <div style="margin-bottom: 12px; display: flex; justify-content: space-between;">
+            <span style="color: var(--md-on-surface-variant); font-weight: 500;">Used: {{.DiskUsed}}</span>
+            <span style="color: var(--md-on-surface-variant); font-weight: 500;">Free: {{.DiskFree}}</span>
+        </div>
+        
+        <!-- Прогресс бар -->
+        <div style="width: 100%; background: var(--md-surface-container-high); border-radius: 100px; height: 12px; overflow: hidden; margin-bottom: 16px;">
+            <div style="height: 100%; background: {{if gt .DiskPercentRaw 90.0}}var(--md-error){{else}}var(--md-primary){{end}}; width: {{.DiskPercent}}%; transition: width 0.5s ease;"></div>
+        </div>
+        
+        <p style="margin: 0; text-align: right; color: var(--md-on-surface-variant); font-size: 0.875rem;">
+            Total Capacity: <strong style="color: var(--md-on-surface);">{{.DiskTotal}}</strong> ({{.DiskPercent}}% used)
+        </p>
+    </div>
     
     <div class="card">
         <div style="display: flex; align-items: center; margin-bottom: 20px;">
