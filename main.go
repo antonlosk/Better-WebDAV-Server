@@ -33,7 +33,7 @@ func openBrowser(url string) error {
 	default:
 		return fmt.Errorf("unsupported platform")
 	}
-	
+
 	return exec.Command(cmd, args...).Start()
 }
 
@@ -43,11 +43,11 @@ func main() {
 
 	database.InitDB()
 	config.InitConfig()
-	logs.InitLogger()
+	logs.InitLogger() // Теперь эта функция создает и открывает файл logs/server.log
 
 	// Запускаем серверы
 	webdav.StartServer()
-	handlers.StartWebServer() // Теперь это не блокирующий вызов
+	handlers.StartWebServer()
 
 	// Авто-открытие браузера (только при первом запуске)
 	go func() {
@@ -55,7 +55,7 @@ func main() {
 		if !auth.AdminExists() {
 			cfg := config.GetConfig()
 			url := fmt.Sprintf("http://localhost:%s", cfg.WebUIPort)
-			
+
 			logs.Log("INFO", "Initial setup required. Opening browser...")
 			if err := openBrowser(url); err != nil {
 				logs.Log("WARNING", "Failed to auto-open browser: "+err.Error())
@@ -67,11 +67,9 @@ func main() {
 	// GRACEFUL SHUTDOWN (МЯГКАЯ ОСТАНОВКА)
 	// ==========================================
 
-	// Создаем канал, который слушает прерывания от ОС (Ctrl+C или закрытие службы)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	// Программа будет "висеть" на этой строке и работать до тех пор, пока не придет сигнал
 	<-quit
 
 	fmt.Println("\n[SYSTEM] Received shutdown signal. Initiating graceful shutdown...")
@@ -79,13 +77,15 @@ func main() {
 
 	// 1. Останавливаем панель управления
 	handlers.StopWebServer()
-	
-	// 2. Останавливаем WebDAV-сервер (даст текущим загрузкам до 5 сек на завершение)
+
+	// 2. Останавливаем WebDAV-сервер
 	webdav.StopServer()
-	
-	// 3. Безопасно закрываем SQLite (сбрасываем кэш на диск)
+
+	// 3. Безопасно закрываем SQLite
 	database.CloseDB()
 
-	logs.Log("INFO", "Application exited cleanly")
+	// 4. Освобождаем текстовый файл логов (новое!)
+	logs.CloseLogger()
+
 	fmt.Println("[SYSTEM] Application exited cleanly. Goodbye!")
 }

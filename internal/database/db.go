@@ -21,6 +21,7 @@ func InitDB() {
 
 	DB.SetMaxOpenConns(1)
 
+	// УБРАНА ТАБЛИЦА LOGS: теперь всё пишется только в текстовый файл
 	createTables := `
 	CREATE TABLE IF NOT EXISTS admin_users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,12 +43,6 @@ func InitDB() {
 		web_ui_port TEXT,
 		shared_path TEXT
 	);
-	CREATE TABLE IF NOT EXISTS logs (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		level TEXT,
-		message TEXT,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
 	`
 	_, err = DB.Exec(createTables)
 	if err != nil {
@@ -58,7 +53,6 @@ func InitDB() {
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_delete INTEGER DEFAULT 1")
 }
 
-// НОВАЯ ФУНКЦИЯ: Мягко закрывает соединение с БД
 func CloseDB() {
 	if DB != nil {
 		DB.Close()

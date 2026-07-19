@@ -26,7 +26,7 @@ import (
 
 var (
 	store    *sessions.CookieStore
-	uiServer *http.Server // Глобальная переменная для веб-сервера панели управления
+	uiServer *http.Server
 )
 
 var (
@@ -155,7 +155,6 @@ func getCSRFField(r *http.Request) template.HTML {
 	return template.HTML(fmt.Sprintf(`<input type="hidden" name="csrf_token" value="%s">`, html.EscapeString(token)))
 }
 
-// ИЗМЕНЕНИЕ: Теперь функция не блокирует поток
 func StartWebServer() {
 	initSessionStore()
 
@@ -180,7 +179,6 @@ func StartWebServer() {
 
 	logs.Log("INFO", "Web Management UI starting on port "+cfg.WebUIPort)
 
-	// Запускаем веб-сервер панели в фоне
 	go func() {
 		if err := uiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logs.Log("ERROR", "Failed to start Web Management UI: "+err.Error())
@@ -188,7 +186,6 @@ func StartWebServer() {
 	}()
 }
 
-// НОВАЯ ФУНКЦИЯ: Мягкая остановка сервера админки
 func StopWebServer() {
 	if uiServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -513,6 +510,7 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, r, "users", map[string]interface{}{"Users": users})
 }
 
+// ИЗМЕНЕННАЯ ФУНКЦИЯ ЛОГОВ (Теперь работает с файлом)
 func logsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("action") == "clear" {
 		logs.ClearLogs()
@@ -521,11 +519,11 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.FormValue("action") == "download" {
 		w.Header().Set("Content-Disposition", "attachment; filename=server_logs.txt")
-		entries := logs.GetLogs(1000)
-		for _, e := range entries {
-			fmt.Fprintf(w, "[%s] %s - %s\n", e.CreatedAt, e.Level, e.Message)
-		}
+		// Отдаем физический файл напрямую! Быстро и эффективно.
+		http.ServeFile(w, r, "logs/server.log")
 		return
 	}
-	renderTemplate(w, r, "logs", map[string]interface{}{"Logs": logs.GetLogs(100)})
+	
+	// Выводим 150 последних строк из файла в панель управления
+	renderTemplate(w, r, "logs", map[string]interface{}{"Logs": logs.GetLogs(150)})
 }
