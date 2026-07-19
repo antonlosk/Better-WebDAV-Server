@@ -13,7 +13,7 @@ var DB *sql.DB
 func InitDB() {
 	var err error
 	os.MkdirAll("data", 0755)
-	
+
 	DB, err = sql.Open("sqlite", "data/storage.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
@@ -21,7 +21,6 @@ func InitDB() {
 
 	DB.SetMaxOpenConns(1)
 
-	// УБРАНА ТАБЛИЦА LOGS: теперь всё пишется только в текстовый файл
 	createTables := `
 	CREATE TABLE IF NOT EXISTS admin_users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +40,8 @@ func InitDB() {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		webdav_port TEXT,
 		web_ui_port TEXT,
-		shared_path TEXT
+		shared_path TEXT,
+		log_retention TEXT DEFAULT '1_year'
 	);
 	`
 	_, err = DB.Exec(createTables)
@@ -51,6 +51,9 @@ func InitDB() {
 
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_upload INTEGER DEFAULT 1")
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_delete INTEGER DEFAULT 1")
+	
+	// Изменили fallback-значение для старых баз на 1_year
+	DB.Exec("ALTER TABLE settings ADD COLUMN log_retention TEXT DEFAULT '1_year'")
 }
 
 func CloseDB() {

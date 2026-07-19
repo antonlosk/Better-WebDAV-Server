@@ -393,6 +393,12 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		newPath := r.FormValue("shared_path")
 		newDavPort := r.FormValue("webdav_port")
 		newUIPort := r.FormValue("web_ui_port")
+		newLogRetention := r.FormValue("log_retention")
+
+		// Значение по умолчанию, если форма пришла пустой
+		if newLogRetention == "" {
+			newLogRetention = "1_year"
+		}
 
 		davPortInt, errDav := strconv.Atoi(newDavPort)
 		uiPortInt, errUI := strconv.Atoi(newUIPort)
@@ -411,11 +417,20 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 				if l != nil {
 					l.Close()
 				}
-				err := config.SaveConfig(config.Settings{WebDAVPort: newDavPort, WebUIPort: newUIPort, SharedPath: newPath})
+				err := config.SaveConfig(config.Settings{
+					WebDAVPort:   newDavPort,
+					WebUIPort:    newUIPort,
+					SharedPath:   newPath,
+					LogRetention: newLogRetention,
+				})
+				
 				if err != nil {
 					logs.Log("ERROR", "Failed to save configuration: "+err.Error())
 					msg = "Error: Failed to save settings to database!"
 				} else {
+					// Запускаем чистку после сохранения
+					go logs.CleanOldLogs() 
+					
 					logs.Log("INFO", "Configuration changed. Restarting WebDAV...")
 					webdav.RestartServer()
 					msg = "Settings saved successfully!"

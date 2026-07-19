@@ -12,16 +12,39 @@
             <label>Shared Path (Directory)</label>
             <input type="text" name="shared_path" value="{{.Config.SharedPath}}" required>
         </div>
-        <div class="form-group">
-            <label>WebDAV Port</label>
-            <input type="number" name="webdav_port" value="{{.Config.WebDAVPort}}" required>
+        
+        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+            <div class="form-group" style="flex: 1;">
+                <label>WebDAV Port</label>
+                <input type="number" name="webdav_port" value="{{.Config.WebDAVPort}}" required>
+            </div>
+            <div class="form-group" style="flex: 1;">
+                <label>Web Interface Port</label>
+                <input type="number" name="web_ui_port" value="{{.Config.WebUIPort}}" required>
+                <small><span class="material-symbols-rounded" style="font-size: 14px;">warning</span> Manual restart required.</small>
+            </div>
         </div>
-        <div class="form-group">
-            <label>Web Interface Port</label>
-            <input type="number" name="web_ui_port" value="{{.Config.WebUIPort}}" required>
-            <small><span class="material-symbols-rounded" style="font-size: 14px;">warning</span> Changing UI port requires manual application restart.</small>
+
+        <div class="form-group" style="margin-top: 8px;">
+            <label>Log Retention Period</label>
+            <select name="log_retention" style="width: 100%; padding: 16px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px; font-size: 1rem; color: var(--md-on-surface); outline: none; cursor: pointer; appearance: auto;">
+                <option value="1_hour" {{if eq .Config.LogRetention "1_hour"}}selected{{end}}>1 Hour</option>
+                <option value="24_hours" {{if eq .Config.LogRetention "24_hours"}}selected{{end}}>24 Hours</option>
+                <option value="7_days" {{if eq .Config.LogRetention "7_days"}}selected{{end}}>7 Days</option>
+                <option value="1_month" {{if eq .Config.LogRetention "1_month"}}selected{{end}}>1 Month</option>
+                <option value="3_months" {{if eq .Config.LogRetention "3_months"}}selected{{end}}>3 Months</option>
+                <option value="6_months" {{if eq .Config.LogRetention "6_months"}}selected{{end}}>6 Months</option>
+                <option value="9_months" {{if eq .Config.LogRetention "9_months"}}selected{{end}}>9 Months</option>
+                <option value="1_year" {{if eq .Config.LogRetention "1_year"}}selected{{end}}>1 Year</option>
+                <option value="never" {{if eq .Config.LogRetention "never"}}selected{{end}}>Never (Disable auto-cleanup)</option>
+            </select>
+            <small style="margin-top: 8px; color: var(--md-on-surface-variant);">
+                <span class="material-symbols-rounded" style="font-size: 14px;">auto_delete</span> 
+                Server logs older than this period will be automatically deleted.
+            </small>
         </div>
-        <button type="submit" class="btn btn-primary" style="margin-top: 16px;">
+
+        <button type="submit" class="btn btn-primary" style="margin-top: 24px;">
             <span class="material-symbols-rounded">save</span> Save Settings
         </button>
     </form>

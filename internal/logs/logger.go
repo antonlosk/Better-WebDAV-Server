@@ -1,6 +1,7 @@
 package logs
 
 import (
+	"betterwebdav/internal/config"
 	"bufio"
 	"io"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type LogEntry struct {
@@ -19,7 +21,7 @@ type LogEntry struct {
 
 var (
 	logFile *os.File
-	logMu   sync.Mutex // Мьютекс для защиты от чтения во время обнуления файла
+	logMu   sync.Mutex
 )
 
 func InitLogger() {
@@ -37,6 +39,15 @@ func InitLogger() {
 	log.SetFlags(log.Ldate | log.Ltime)
 
 	Log("INFO", "Application started")
+
+	// ЗАПУСК ФОНОВОЙ ОЧИСТКИ ЛОГОВ (Проверяет каждый час)
+	go func() {
+		CleanOldLogs() // Первичный прогон при запуске
+		for {
+			time.Sleep(1 * time.Hour)
+			CleanOldLogs()
+		}
+	}()
 }
 
 func CloseLogger() {
@@ -47,14 +58,12 @@ func CloseLogger() {
 	}
 }
 
-// Запись ТОЛЬКО в файл и в консоль
 func Log(level, message string) {
 	logMu.Lock()
 	defer logMu.Unlock()
 	log.Printf("[%s] %s\n", level, message)
 }
 
-// Чтение логов НАПРЯМУЮ из текстового файла
 func GetLogs(limit int) []LogEntry {
 	logMu.Lock()
 	defer logMu.Unlock()
@@ -66,7 +75,6 @@ func GetLogs(limit int) []LogEntry {
 	}
 	defer file.Close()
 
-	// Читаем все строки
 	scanner := bufio.NewScanner(file)
 	var allLines []string
 	for scanner.Scan() {
@@ -80,21 +88,17 @@ func GetLogs(limit int) []LogEntry {
 	}
 
 	idCounter := 1
-	// Идем с конца в начало (новые логи сверху)
 	for i := len(allLines) - 1; i >= start; i-- {
 		line := allLines[i]
 		if len(line) < 20 {
 			continue
 		}
 
-		// Парсим стандартный формат Go: "2026/07/19 15:30:12 [INFO] Message"
 		createdAt := line[0:19]
 		rest := line[20:]
-
 		level := "INFO"
 		message := rest
 
-		// Извлекаем уровень (INFO, ERROR, WARNING)
 		if strings.HasPrefix(rest, "[") {
 			endIdx := strings.Index(rest, "]")
 			if endIdx != -1 {
@@ -114,16 +118,84 @@ func GetLogs(limit int) []LogEntry {
 	return entries
 }
 
-// Очистка физического файла
 func ClearLogs() {
 	logMu.Lock()
 	defer logMu.Unlock()
 
 	if logFile != nil {
-		logFile.Truncate(0) // Обрезаем файл до 0 байт
-		logFile.Seek(0, 0)  // Сбрасываем курсор в начало
+		logFile.Truncate(0)
+		logFile.Seek(0, 0)
 	}
-	
-	// Пишем первую запись в чистый файл
 	log.Printf("[INFO] Logs cleared by admin via Web UI\n")
+}
+
+// НОВАЯ ФУНКЦИЯ: Автоматическая очистка логов по дате
+func CleanOldLogs() {
+	cfg := config.GetConfig()
+	
+	// Если автоочистка отключена - сразу завершаем функцию
+	if cfg.LogRetention == "never" {
+		return
+	}
+
+	var retention time.Duration
+
+	// Определяем время хранения (по умолчанию 1 год)
+	switch cfg.LogRetention {
+	case "1_hour": retention = 1 * time.Hour
+	case "24_hours": retention = 24 * time.Hour
+	case "7_days": retention = 7 * 24 * time.Hour
+	case "1_month": retention = 30 * 24 * time.Hour
+	case "3_months": retention = 90 * 24 * time.Hour
+	case "6_months": retention = 180 * 24 * time.Hour
+	case "9_months": retention = 270 * 24 * time.Hour
+	case "1_year": retention = 365 * 24 * time.Hour
+	default: retention = 365 * 24 * time.Hour // По умолчанию 1 год
+	}
+
+	cutoff := time.Now().Add(-retention)
+	layout := "2006/01/02 15:04:05"
+
+	logMu.Lock()
+	defer logMu.Unlock()
+
+	logPath := filepath.Join("logs", "server.log")
+	tmpPath := filepath.Join("logs", "server.tmp")
+
+	file, err := os.Open(logPath)
+	if err != nil {
+		return
+	}
+
+	var keptLines []string
+	scanner := bufio.NewScanner(file)
+	
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(line) >= 19 {
+			if t, err := time.Parse(layout, line[:19]); err == nil {
+				if t.Before(cutoff) {
+					continue 
+				}
+			}
+		}
+		keptLines = append(keptLines, line)
+	}
+	file.Close()
+
+	if logFile != nil {
+		logFile.Close()
+	}
+
+	tmp, err := os.Create(tmpPath)
+	if err == nil {
+		for _, l := range keptLines {
+			tmp.WriteString(l + "\n")
+		}
+		tmp.Close()
+		os.Rename(tmpPath, logPath) 
+	}
+
+	logFile, _ = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 }
