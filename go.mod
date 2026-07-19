@@ -1,6 +1,6 @@
 module betterwebdav
 
-go 1.26.5
+go 1.26.4
 
 require (
 	github.com/gorilla/sessions v1.4.0
