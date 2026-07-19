@@ -40,9 +40,8 @@ func InitLogger() {
 
 	Log("INFO", "Application started")
 
-	// ЗАПУСК ФОНОВОЙ ОЧИСТКИ ЛОГОВ (Проверяет каждый час)
 	go func() {
-		CleanOldLogs() // Первичный прогон при запуске
+		CleanOldLogs()
 		for {
 			time.Sleep(1 * time.Hour)
 			CleanOldLogs()
@@ -118,29 +117,40 @@ func GetLogs(limit int) []LogEntry {
 	return entries
 }
 
+// ОЧИСТКА БЕЗ ОСТАВЛЕНИЯ ЗАПИСЕЙ
 func ClearLogs() {
 	logMu.Lock()
 	defer logMu.Unlock()
 
+	logPath := filepath.Join("logs", "server.log")
+
+	// 1. Закрываем текущий дескриптор
 	if logFile != nil {
-		logFile.Truncate(0)
-		logFile.Seek(0, 0)
+		logFile.Close()
 	}
-	log.Printf("[INFO] Logs cleared by admin via Web UI\n")
+
+	// 2. Жестко перезаписываем файл пустотой (0 байт)
+	os.WriteFile(logPath, []byte(""), 0666)
+
+	// 3. Открываем чистый файл заново для работы логгера
+	var err error
+	logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err == nil {
+		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	}
+	
+	// Мы убрали log.Printf("Logs cleared..."), теперь файл остается абсолютно пустым.
 }
 
-// НОВАЯ ФУНКЦИЯ: Автоматическая очистка логов по дате
 func CleanOldLogs() {
 	cfg := config.GetConfig()
 	
-	// Если автоочистка отключена - сразу завершаем функцию
 	if cfg.LogRetention == "never" {
 		return
 	}
 
 	var retention time.Duration
 
-	// Определяем время хранения (по умолчанию 1 год)
 	switch cfg.LogRetention {
 	case "1_hour": retention = 1 * time.Hour
 	case "24_hours": retention = 24 * time.Hour
@@ -150,7 +160,7 @@ func CleanOldLogs() {
 	case "6_months": retention = 180 * 24 * time.Hour
 	case "9_months": retention = 270 * 24 * time.Hour
 	case "1_year": retention = 365 * 24 * time.Hour
-	default: retention = 365 * 24 * time.Hour // По умолчанию 1 год
+	default: retention = 365 * 24 * time.Hour
 	}
 
 	cutoff := time.Now().Add(-retention)
