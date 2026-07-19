@@ -1,7 +1,7 @@
 package main
 
 import (
-	"betterwebdav/internal/auth" // Добавили импорт пакета auth
+	"betterwebdav/internal/auth"
 	"betterwebdav/internal/config"
 	"betterwebdav/internal/database"
 	"betterwebdav/internal/handlers"
@@ -10,11 +10,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
+	"syscall"
 	"time"
 )
 
-// openBrowser открывает ссылку в браузере по умолчанию в зависимости от ОС
 func openBrowser(url string) error {
 	var cmd string
 	var args []string
@@ -37,23 +38,20 @@ func openBrowser(url string) error {
 }
 
 func main() {
-	// Создаем обязательные директории
 	os.MkdirAll("data", 0755)
 	os.MkdirAll("logs", 0755)
 
-	// Инициализируем базу данных, конфиг и логи
 	database.InitDB()
 	config.InitConfig()
 	logs.InitLogger()
 
-	// Автоматически запускаем WebDAV сервер
+	// Запускаем серверы
 	webdav.StartServer()
+	handlers.StartWebServer() // Теперь это не блокирующий вызов
 
-	// Авто-открытие браузера
+	// Авто-открытие браузера (только при первом запуске)
 	go func() {
-		time.Sleep(1 * time.Second) // Ждем запуска веб-сервера админки
-		
-		// ПРОВЕРКА: Открываем браузер ТОЛЬКО если администратор еще не создан
+		time.Sleep(1 * time.Second)
 		if !auth.AdminExists() {
 			cfg := config.GetConfig()
 			url := fmt.Sprintf("http://localhost:%s", cfg.WebUIPort)
@@ -65,6 +63,29 @@ func main() {
 		}
 	}()
 
-	// Запускаем веб-интерфейс панели управления (Блокирующий вызов)
-	handlers.StartWebServer()
+	// ==========================================
+	// GRACEFUL SHUTDOWN (МЯГКАЯ ОСТАНОВКА)
+	// ==========================================
+
+	// Создаем канал, который слушает прерывания от ОС (Ctrl+C или закрытие службы)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+
+	// Программа будет "висеть" на этой строке и работать до тех пор, пока не придет сигнал
+	<-quit
+
+	fmt.Println("\n[SYSTEM] Received shutdown signal. Initiating graceful shutdown...")
+	logs.Log("INFO", "Graceful shutdown initiated by system signal...")
+
+	// 1. Останавливаем панель управления
+	handlers.StopWebServer()
+	
+	// 2. Останавливаем WebDAV-сервер (даст текущим загрузкам до 5 сек на завершение)
+	webdav.StopServer()
+	
+	// 3. Безопасно закрываем SQLite (сбрасываем кэш на диск)
+	database.CloseDB()
+
+	logs.Log("INFO", "Application exited cleanly")
+	fmt.Println("[SYSTEM] Application exited cleanly. Goodbye!")
 }

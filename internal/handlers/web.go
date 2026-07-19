@@ -21,10 +21,13 @@ import (
 	"time"
 
 	"github.com/gorilla/sessions"
-	"github.com/shirou/gopsutil/v3/disk" // НОВАЯ БИБЛИОТЕКА
+	"github.com/shirou/gopsutil/v3/disk"
 )
 
-var store *sessions.CookieStore
+var (
+	store    *sessions.CookieStore
+	uiServer *http.Server // Глобальная переменная для веб-сервера панели управления
+)
 
 var (
 	loginAttempts = make(map[string]int)
@@ -152,6 +155,7 @@ func getCSRFField(r *http.Request) template.HTML {
 	return template.HTML(fmt.Sprintf(`<input type="hidden" name="csrf_token" value="%s">`, html.EscapeString(token)))
 }
 
+// ИЗМЕНЕНИЕ: Теперь функция не блокирует поток
 func StartWebServer() {
 	initSessionStore()
 
@@ -169,10 +173,28 @@ func StartWebServer() {
 	mux.HandleFunc("/logs", authMiddleware(logsHandler))
 	mux.HandleFunc("/api/control", authMiddleware(controlHandler))
 
+	uiServer = &http.Server{
+		Addr:    ":" + cfg.WebUIPort,
+		Handler: csrfProtect(mux),
+	}
+
 	logs.Log("INFO", "Web Management UI starting on port "+cfg.WebUIPort)
 
-	if err := http.ListenAndServe(":"+cfg.WebUIPort, csrfProtect(mux)); err != nil {
-		logs.Log("ERROR", "Failed to start Web Management UI: "+err.Error())
+	// Запускаем веб-сервер панели в фоне
+	go func() {
+		if err := uiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logs.Log("ERROR", "Failed to start Web Management UI: "+err.Error())
+		}
+	}()
+}
+
+// НОВАЯ ФУНКЦИЯ: Мягкая остановка сервера админки
+func StopWebServer() {
+	if uiServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		uiServer.Shutdown(ctx)
+		logs.Log("INFO", "Web Management UI stopped")
 	}
 }
 
@@ -303,7 +325,6 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-// Вспомогательная функция для форматирования байтов (KB, MB, GB, TB)
 func formatBytes(bytes uint64) string {
 	const unit = 1024
 	if bytes < unit {
@@ -330,7 +351,6 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 		logs.Log("ERROR", "Failed to count users: "+err.Error())
 	}
 
-	// ПОЛУЧЕНИЕ ИНФОРМАЦИИ О ДИСКЕ
 	diskTotal, diskFree, diskUsed, diskPercentStr := "Unknown", "Unknown", "Unknown", "0.0"
 	diskPercentRaw := 0.0
 
@@ -341,9 +361,6 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 		diskUsed = formatBytes(usage.Used)
 		diskPercentRaw = usage.UsedPercent
 		diskPercentStr = fmt.Sprintf("%.1f", usage.UsedPercent)
-	} else {
-		// Если папка не существует или недоступна, залогируем ошибку
-		logs.Log("WARNING", "Failed to get disk usage for "+cfg.SharedPath+": "+err.Error())
 	}
 
 	data := map[string]interface{}{

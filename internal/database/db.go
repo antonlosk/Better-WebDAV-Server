@@ -54,7 +54,13 @@ func InitDB() {
 		log.Fatalf("Failed to create tables: %v", err)
 	}
 
-	// Безопасная авто-миграция для старых версий БД (добавит колонки, если их нет)
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_upload INTEGER DEFAULT 1")
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_delete INTEGER DEFAULT 1")
+}
+
+// НОВАЯ ФУНКЦИЯ: Мягко закрывает соединение с БД
+func CloseDB() {
+	if DB != nil {
+		DB.Close()
+	}
 }
