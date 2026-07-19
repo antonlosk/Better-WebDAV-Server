@@ -28,8 +28,6 @@ var (
 	serverDone chan struct{}
 )
 
-// safeResponseWriter предотвращает панику и ошибки двойной записи заголовков (superfluous WriteHeader),
-// если Java-клиент обрывает соединение раньше времени.
 type safeResponseWriter struct {
 	http.ResponseWriter
 	wroteHeader bool
@@ -120,15 +118,32 @@ func StartServer() error {
 
 		auth.ResetLoginAttempts(ip)
 
-		// Оборачиваем Writer для защиты от обрывов связи клиентом
+		// ЧИТАЕМ ПРАВА ПОЛЬЗОВАТЕЛЯ
+		canUpload, canDelete := auth.GetPermissions(user)
+
+		// ПРОВЕРКА ПРАВ: ЗАГРУЗКА, СОЗДАНИЕ, ПЕРЕИМЕНОВАНИЕ
+		if r.Method == "PUT" || r.Method == "MKCOL" || r.Method == "MOVE" || r.Method == "COPY" || r.Method == "PROPPATCH" {
+			if !canUpload {
+				logs.Log("WARNING", fmt.Sprintf("Upload blocked (No Permissions): %s by %s", r.URL.Path, user))
+				http.Error(w, "Forbidden - You do not have permission to upload or modify files", http.StatusForbidden)
+				return
+			}
+		}
+
+		// ПРОВЕРКА ПРАВ: УДАЛЕНИЕ
+		if r.Method == "DELETE" {
+			if !canDelete {
+				logs.Log("WARNING", fmt.Sprintf("Deletion blocked (No Permissions): %s by %s", r.URL.Path, user))
+				http.Error(w, "Forbidden - You do not have permission to delete files", http.StatusForbidden)
+				return
+			}
+		}
+
 		sw := &safeResponseWriter{ResponseWriter: w}
 
 		if r.Method == "PUT" {
-			// ИСПРАВЛЕНИЕ: Принудительно отключаем Keep-Alive для тяжелых загрузок.
-			// Это заставляет Java/Android клиенты закрывать сессию корректно и спасает от ошибки "interrupted".
 			r.Header.Set("Connection", "close")
 			sw.Header().Set("Connection", "close")
-
 			logs.Log("INFO", fmt.Sprintf("Upload started: %s by %s (IP: %s)", r.URL.Path, user, ip))
 			defer func() {
 				logs.Log("INFO", fmt.Sprintf("Upload finished: %s by %s (IP: %s)", r.URL.Path, user, ip))
@@ -165,7 +180,6 @@ func StartServer() error {
 			}
 		}
 
-		// Передаем безопасный Writer в стандартный обработчик
 		fs.ServeHTTP(sw, r)
 	})
 

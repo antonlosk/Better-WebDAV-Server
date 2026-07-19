@@ -11,10 +11,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// ==========================================
-// ГЛОБАЛЬНЫЙ БЛОК ЗАЩИТЫ ОТ БРУТФОРСА
-// ==========================================
-
 var (
 	loginAttempts = make(map[string]int)
 	lockoutTimes  = make(map[string]time.Time)
@@ -62,10 +58,6 @@ func GetClientIP(r *http.Request) string {
 	return ip
 }
 
-// ==========================================
-// ЛОГИКА АВТОРИЗАЦИИ
-// ==========================================
-
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 10)
 	return string(bytes), err
@@ -107,4 +99,14 @@ func AuthenticateWebDAV(username, password string) bool {
 		return false
 	}
 	return CheckPasswordHash(password, hash)
+}
+
+// НОВАЯ ФУНКЦИЯ: Получение прав пользователя
+func GetPermissions(username string) (canUpload bool, canDelete bool) {
+	var up, del int
+	err := database.DB.QueryRow("SELECT can_upload, can_delete FROM webdav_users WHERE username = ?", username).Scan(&up, &del)
+	if err != nil {
+		return false, false
+	}
+	return up == 1, del == 1
 }

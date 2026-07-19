@@ -6,46 +6,83 @@
     <form method="POST" style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
         {{.CSRFField}}
         <input type="hidden" name="action" value="add">
-        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 200px;">
-            <label>Username</label>
-            <input type="text" name="username" required>
+        
+        <div style="display: flex; gap: 16px; width: 100%; flex-wrap: wrap;">
+            <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 200px;">
+                <label>Username</label>
+                <input type="text" name="username" required>
+            </div>
+            <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 200px;">
+                <label>Password</label>
+                <input type="password" name="password" required>
+            </div>
         </div>
-        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 200px;">
-            <label>Password</label>
-            <input type="password" name="password" required>
+
+        <!-- Переключатели прав при создании -->
+        <div style="display: flex; gap: 24px; width: 100%; align-items: center; margin-top: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--md-on-surface-variant); font-weight: 500;">
+                <input type="checkbox" name="can_upload" checked style="width: 18px; height: 18px; accent-color: var(--md-primary);">
+                Allow Upload
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--md-on-surface-variant); font-weight: 500;">
+                <input type="checkbox" name="can_delete" checked style="width: 18px; height: 18px; accent-color: var(--md-primary);">
+                Allow Delete
+            </label>
+            
+            <button type="submit" class="btn btn-success" style="margin-left: auto;">
+                <span class="material-symbols-rounded">person_add</span> Add
+            </button>
         </div>
-        <button type="submit" class="btn btn-success" style="height: 54px; margin-top: 24px;">
-            <span class="material-symbols-rounded">person_add</span> Add
-        </button>
     </form>
 </div>
 
 <div class="card">
     <table class="table">
         <tr>
-            <th>ID</th>
             <th>Username</th>
-            <th>Status</th>
-            <th>Created</th>
+            <th>Account Status</th>
+            <th>Upload</th>
+            <th>Delete</th>
             <th>Actions</th>
         </tr>
         {{range .Users}}
         <tr>
-            <td>#{{.ID}}</td>
             <td style="font-weight: 500;">{{.Username}}</td>
             <td>
                 <span class="badge {{if eq .Status `Enabled`}}bg-success{{else}}bg-danger{{end}}">
                     {{.Status}}
                 </span>
             </td>
-            <td>{{.CreatedAt}}</td>
+            <!-- Кнопка Toggle Upload -->
+            <td>
+                <form method="POST" style="margin:0;">
+                    {{$.CSRFField}}
+                    <input type="hidden" name="action" value="toggle_upload">
+                    <input type="hidden" name="id" value="{{.ID}}">
+                    <button title="Toggle Upload" class="btn btn-sm {{if .CanUpload}}btn-success{{else}}btn-danger{{end}}" style="padding: 6px 12px; border-radius: 8px;">
+                        <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">{{if .CanUpload}}cloud_upload{{else}}block{{end}}</span>
+                    </button>
+                </form>
+            </td>
+            <!-- Кнопка Toggle Delete -->
+            <td>
+                <form method="POST" style="margin:0;">
+                    {{$.CSRFField}}
+                    <input type="hidden" name="action" value="toggle_delete">
+                    <input type="hidden" name="id" value="{{.ID}}">
+                    <button title="Toggle Delete" class="btn btn-sm {{if .CanDelete}}btn-success{{else}}btn-danger{{end}}" style="padding: 6px 12px; border-radius: 8px;">
+                        <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">{{if .CanDelete}}delete{{else}}block{{end}}</span>
+                    </button>
+                </form>
+            </td>
+            
             <td style="display:flex; gap: 8px;">
                 <form method="POST" style="margin:0;">
                     {{$.CSRFField}}
                     <input type="hidden" name="action" value="toggle">
                     <input type="hidden" name="id" value="{{.ID}}">
-                    <button title="Toggle Status" class="btn btn-sm btn-warning">
-                        <span class="material-symbols-rounded" style="margin: 0;">toggle_on</span>
+                    <button title="Toggle Account Active" class="btn btn-sm btn-warning">
+                        <span class="material-symbols-rounded" style="margin: 0;">power_settings_new</span>
                     </button>
                 </form>
                 <form method="POST" style="margin:0;" onsubmit="return confirm('Delete user {{.Username}}?');">
@@ -53,7 +90,7 @@
                     <input type="hidden" name="action" value="delete">
                     <input type="hidden" name="id" value="{{.ID}}">
                     <button title="Delete User" class="btn btn-sm btn-danger">
-                        <span class="material-symbols-rounded" style="margin: 0;">delete</span>
+                        <span class="material-symbols-rounded" style="margin: 0;">person_remove</span>
                     </button>
                 </form>
             </td>

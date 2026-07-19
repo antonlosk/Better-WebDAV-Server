@@ -328,6 +328,8 @@ type WDUser struct {
 	ID        int
 	Username  string
 	Status    string
+	CanUpload bool
+	CanDelete bool
 	CreatedAt string
 }
 
@@ -338,13 +340,19 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 
 		if action == "add" {
 			u, p := r.FormValue("username"), r.FormValue("password")
+			
+			// Считываем состояние чекбоксов из формы (по умолчанию 0)
+			upInt, delInt := 0, 0
+			if r.FormValue("can_upload") == "on" { upInt = 1 }
+			if r.FormValue("can_delete") == "on" { delInt = 1 }
+
 			hash, err := auth.HashPassword(p)
 			if err != nil {
 				logs.Log("ERROR", "Password hashing failed: "+err.Error())
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
-			_, err = database.DB.Exec("INSERT INTO webdav_users (username, password_hash) VALUES (?, ?)", u, hash)
+			_, err = database.DB.Exec("INSERT INTO webdav_users (username, password_hash, can_upload, can_delete) VALUES (?, ?, ?, ?)", u, hash, upInt, delInt)
 			if err != nil {
 				logs.Log("ERROR", "Failed to add WebDAV user: "+err.Error())
 			} else {
@@ -357,9 +365,11 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 				logs.Log("INFO", "Deleted WebDAV user ID: "+id)
 			}
 		} else if action == "toggle" {
-			if _, err := database.DB.Exec("UPDATE webdav_users SET status = CASE WHEN status='Enabled' THEN 'Disabled' ELSE 'Enabled' END WHERE id = ?", id); err != nil {
-				logs.Log("ERROR", "Failed to toggle user status: "+err.Error())
-			}
+			database.DB.Exec("UPDATE webdav_users SET status = CASE WHEN status='Enabled' THEN 'Disabled' ELSE 'Enabled' END WHERE id = ?", id)
+		} else if action == "toggle_upload" {
+			database.DB.Exec("UPDATE webdav_users SET can_upload = CASE WHEN can_upload=1 THEN 0 ELSE 1 END WHERE id = ?", id)
+		} else if action == "toggle_delete" {
+			database.DB.Exec("UPDATE webdav_users SET can_delete = CASE WHEN can_delete=1 THEN 0 ELSE 1 END WHERE id = ?", id)
 		} else if action == "pass" {
 			hash, err := auth.HashPassword(r.FormValue("password"))
 			if err != nil {
@@ -376,7 +386,7 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := database.DB.Query("SELECT id, username, status, datetime(created_at, 'localtime') FROM webdav_users")
+	rows, err := database.DB.Query("SELECT id, username, status, can_upload, can_delete, datetime(created_at, 'localtime') FROM webdav_users")
 	if err != nil {
 		logs.Log("ERROR", "Failed to fetch users from database: "+err.Error())
 		http.Error(w, "Database error", http.StatusInternalServerError)
@@ -387,9 +397,12 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 	var users []WDUser
 	for rows.Next() {
 		var u WDUser
-		if err := rows.Scan(&u.ID, &u.Username, &u.Status, &u.CreatedAt); err != nil {
+		var upInt, delInt int
+		if err := rows.Scan(&u.ID, &u.Username, &u.Status, &upInt, &delInt, &u.CreatedAt); err != nil {
 			continue
 		}
+		u.CanUpload = upInt == 1
+		u.CanDelete = delInt == 1
 		users = append(users, u)
 	}
 

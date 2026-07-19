@@ -14,17 +14,11 @@ func InitDB() {
 	var err error
 	os.MkdirAll("data", 0755)
 	
-	// Включаем режим WAL (позволяет одновременно читать и писать) 
-	// и устанавливаем busy_timeout в 5000мс. Если база заблокирована, 
-	// запрос подождет до 5 секунд вместо того, чтобы сразу упасть.
 	DB, err = sql.Open("sqlite", "data/storage.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 
-	// ЖЕСТКОЕ ОГРАНИЧЕНИЕ: для SQLite в Go лучше всего ограничить количество 
-	// открытых соединений до 1. Это заставит Go выстраивать все параллельные 
-	// запросы (логи, авторизацию и т.д.) в очередь, полностью исключая ошибку SQLITE_BUSY.
 	DB.SetMaxOpenConns(1)
 
 	createTables := `
@@ -38,6 +32,8 @@ func InitDB() {
 		username TEXT UNIQUE,
 		password_hash TEXT,
 		status TEXT DEFAULT 'Enabled',
+		can_upload INTEGER DEFAULT 1,
+		can_delete INTEGER DEFAULT 1,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE TABLE IF NOT EXISTS settings (
@@ -57,4 +53,8 @@ func InitDB() {
 	if err != nil {
 		log.Fatalf("Failed to create tables: %v", err)
 	}
+
+	// Безопасная авто-миграция для старых версий БД (добавит колонки, если их нет)
+	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_upload INTEGER DEFAULT 1")
+	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_delete INTEGER DEFAULT 1")
 }
