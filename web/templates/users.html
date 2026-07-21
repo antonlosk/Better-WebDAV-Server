@@ -18,7 +18,6 @@
             </div>
         </div>
 
-        <!-- Переключатели прав при создании -->
         <div style="display: flex; gap: 24px; width: 100%; align-items: center; margin-top: 8px;">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--md-on-surface-variant); font-weight: 500;">
                 <input type="checkbox" name="can_upload" checked style="width: 18px; height: 18px; accent-color: var(--md-primary);">
@@ -53,44 +52,47 @@
                     {{.Status}}
                 </span>
             </td>
-            <!-- Кнопка Toggle Upload -->
             <td>
                 <form method="POST" style="margin:0;">
                     {{$.CSRFField}}
                     <input type="hidden" name="action" value="toggle_upload">
                     <input type="hidden" name="id" value="{{.ID}}">
-                    <button title="Toggle Upload" class="btn btn-sm {{if .CanUpload}}btn-success{{else}}btn-danger{{end}}" style="padding: 6px 12px; border-radius: 8px;">
+                    <button title="Toggle Upload Permissions" class="btn btn-sm {{if .CanUpload}}btn-success{{else}}btn-danger{{end}}" style="padding: 6px 12px; border-radius: 8px;">
                         <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">{{if .CanUpload}}cloud_upload{{else}}block{{end}}</span>
                     </button>
                 </form>
             </td>
-            <!-- Кнопка Toggle Delete -->
             <td>
                 <form method="POST" style="margin:0;">
                     {{$.CSRFField}}
                     <input type="hidden" name="action" value="toggle_delete">
                     <input type="hidden" name="id" value="{{.ID}}">
-                    <button title="Toggle Delete" class="btn btn-sm {{if .CanDelete}}btn-success{{else}}btn-danger{{end}}" style="padding: 6px 12px; border-radius: 8px;">
+                    <button title="Toggle Delete Permissions" class="btn btn-sm {{if .CanDelete}}btn-success{{else}}btn-danger{{end}}" style="padding: 6px 12px; border-radius: 8px;">
                         <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">{{if .CanDelete}}delete{{else}}block{{end}}</span>
                     </button>
                 </form>
             </td>
             
             <td style="display:flex; gap: 8px;">
+                <!-- НОВАЯ КНОПКА СМЕНЫ ПАРОЛЯ -->
+                <button type="button" title="Change Password" class="btn btn-sm btn-primary" onclick="openPwdDialog('{{.ID}}', '{{.Username}}')" style="padding: 6px 12px; border-radius: 8px;">
+                    <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">key</span>
+                </button>
+
                 <form method="POST" style="margin:0;">
                     {{$.CSRFField}}
                     <input type="hidden" name="action" value="toggle">
                     <input type="hidden" name="id" value="{{.ID}}">
-                    <button title="Toggle Account Active" class="btn btn-sm btn-warning">
-                        <span class="material-symbols-rounded" style="margin: 0;">power_settings_new</span>
+                    <button title="Toggle Account Active" class="btn btn-sm btn-warning" style="padding: 6px 12px; border-radius: 8px;">
+                        <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">power_settings_new</span>
                     </button>
                 </form>
                 <form method="POST" style="margin:0;" onsubmit="return confirm('Delete user {{.Username}}?');">
                     {{$.CSRFField}}
                     <input type="hidden" name="action" value="delete">
                     <input type="hidden" name="id" value="{{.ID}}">
-                    <button title="Delete User" class="btn btn-sm btn-danger">
-                        <span class="material-symbols-rounded" style="margin: 0;">person_remove</span>
+                    <button title="Delete User" class="btn btn-sm btn-danger" style="padding: 6px 12px; border-radius: 8px;">
+                        <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">person_remove</span>
                     </button>
                 </form>
             </td>
@@ -98,4 +100,47 @@
         {{end}}
     </table>
 </div>
+
+<!-- ВСПЛЫВАЮЩЕЕ ОКНО СМЕНЫ ПАРОЛЯ -->
+<dialog id="pwdDialog" class="card" style="margin: auto; max-width: 400px; width: 100%; border: none; outline: none; box-shadow: 0 8px 32px rgba(0,0,0,0.3); padding: 32px;">
+    <h3 style="margin-top: 0; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+        <span class="material-symbols-rounded" style="color: var(--md-primary);">key</span> 
+        Change Password
+    </h3>
+    <p style="color: var(--md-on-surface-variant); font-size: 0.875rem; margin-bottom: 24px;">
+        Setting a new password for user: <strong id="pwdUsername" style="color: var(--md-on-surface);"></strong>
+    </p>
+    
+    <form method="POST">
+        {{.CSRFField}}
+        <input type="hidden" name="action" value="pass">
+        <input type="hidden" name="id" id="pwdUserId">
+        
+        <div class="form-group">
+            <label>New Password</label>
+            <input type="password" name="password" required placeholder="••••••••" style="background: var(--md-background);">
+        </div>
+        
+        <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 32px;">
+            <button type="button" class="btn" style="background: var(--md-surface-variant); color: var(--md-on-surface-variant);" onclick="document.getElementById('pwdDialog').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Password</button>
+        </div>
+    </form>
+</dialog>
+
+<!-- СКРИПТ ДЛЯ УПРАВЛЕНИЯ ОКНОМ -->
+<style>
+    /* Затемнение заднего фона для диалогового окна */
+    dialog::backdrop {
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(2px);
+    }
+</style>
+<script>
+    function openPwdDialog(id, username) {
+        document.getElementById('pwdUserId').value = id;
+        document.getElementById('pwdUsername').innerText = username;
+        document.getElementById('pwdDialog').showModal();
+    }
+</script>
 {{end}}
