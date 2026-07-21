@@ -7,16 +7,69 @@
     <!-- Google Fonts & Material Symbols -->
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" rel="stylesheet" />
-    
-    <!-- Подключаем единый CSS-файл -->
     <link rel="stylesheet" href="/static/web/static/css/style.css">
+    
+    <style>
+        /* Стили для зоны перетаскивания (Drag & Drop) */
+        #drop-zone {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(103, 80, 164, 0.95); /* var(--md-primary) с прозрачностью */
+            color: white; z-index: 9999;
+            flex-direction: column; justify-content: center; align-items: center;
+            font-size: 2rem; font-weight: 500; text-align: center;
+        }
+        #drop-zone * { pointer-events: none; } /* Важно для избежания мерцания */
+        #drop-zone .material-symbols-rounded { font-size: 80px; margin-bottom: 24px; }
+
+        /* Прогресс-бар загрузки */
+        #upload-progress {
+            display: none; position: fixed; bottom: 24px; right: 24px;
+            width: 340px; z-index: 1000; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        }
+        .progress-bar-bg { width: 100%; background: var(--md-surface-container-high); border-radius: 100px; height: 8px; margin-top: 16px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; background: var(--md-primary); width: 0%; transition: width 0.2s linear; }
+        
+        /* Кнопка удаления */
+        .btn-icon { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 50%; display: inline-flex; transition: 0.2s; }
+        .btn-icon:hover { background: var(--md-error-container); }
+        .btn-icon:hover .material-symbols-rounded { color: var(--md-error); }
+    </style>
 </head>
 <body style="display: block;">
+
+    <!-- ОВЕРЛЕЙ DRAG & DROP -->
+    {{if .CanUpload}}
+    <div id="drop-zone">
+        <span class="material-symbols-rounded">cloud_upload</span>
+        Drop files here to upload instantly
+    </div>
+
+    <!-- КАРТОЧКА ПРОГРЕССА ЗАГРУЗКИ -->
+    <div id="upload-progress" class="card" style="padding: 20px; border-radius: 16px;">
+        <h3 style="margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+            <span class="material-symbols-rounded" style="color: var(--md-primary);">upload</span> Uploading...
+        </h3>
+        <div id="progress-text" style="font-size: 0.875rem; color: var(--md-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Starting upload</div>
+        <div class="progress-bar-bg">
+            <div id="progress-bar" class="progress-bar-fill"></div>
+        </div>
+    </div>
+    {{end}}
+
     <div class="explorer-container">
-        
-        <div class="explorer-header">
-            <span class="material-symbols-rounded" style="font-size: 40px;">cloud</span>
-            <h2>Index of {{.Path}}</h2>
+        <div class="explorer-header" style="justify-content: space-between; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <span class="material-symbols-rounded" style="font-size: 40px; color: var(--md-primary);">cloud</span>
+                <h2>Index of {{.Path}}</h2>
+            </div>
+            
+            {{if .CanUpload}}
+            <div style="color: var(--md-on-surface-variant); font-size: 0.875rem; display: flex; align-items: center; gap: 8px; background: var(--md-surface-container-high); padding: 8px 16px; border-radius: 100px;">
+                <span class="material-symbols-rounded" style="font-size: 18px;">info</span>
+                Drag & drop files anywhere to upload
+            </div>
+            {{end}}
         </div>
 
         <div class="card">
@@ -25,6 +78,7 @@
                     <th>Name</th>
                     <th>Size</th>
                     <th>Last Modified</th>
+                    {{if .CanDelete}}<th style="text-align: right;">Actions</th>{{end}}
                 </tr>
                 
                 {{if ne .Path "/"}}
@@ -36,6 +90,7 @@
                     </td>
                     <td class="meta-text">-</td>
                     <td class="meta-text">-</td>
+                    {{if .CanDelete}}<td></td>{{end}}
                 </tr>
                 {{end}}
                 
@@ -48,11 +103,120 @@
                     </td>
                     <td class="meta-text">{{.Size}}</td>
                     <td class="meta-text">{{.ModTime}}</td>
+                    
+                    {{if $.CanDelete}}
+                    <td style="text-align: right;">
+                        <button onclick="deleteItem('{{.URL}}', '{{.Name}}')" class="btn-icon" title="Delete File/Folder">
+                            <span class="material-symbols-rounded" style="color: var(--md-on-surface-variant); margin: 0;">delete</span>
+                        </button>
+                    </td>
+                    {{end}}
                 </tr>
                 {{end}}
             </table>
         </div>
-        
     </div>
+
+    <!-- JS СКРИПТЫ ДЛЯ ЗАГРУЗКИ И УДАЛЕНИЯ -->
+    <script>
+        {{if .CanDelete}}
+        function deleteItem(url, name) {
+            if (!confirm('Are you sure you want to permanently delete "' + name + '"?')) return;
+            
+            fetch(url, { method: 'DELETE' })
+                .then(res => {
+                    if (res.ok) location.reload();
+                    else alert('Failed to delete (HTTP Status: ' + res.status + ')');
+                }).catch(err => alert('Network error while deleting item.'));
+        }
+        {{end}}
+
+        {{if .CanUpload}}
+        const dropZone = document.getElementById('drop-zone');
+        const uploadProgress = document.getElementById('upload-progress');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        let dragCounter = 0; // Защита от мерцания при наведении на внутренние элементы
+
+        document.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            dragCounter++;
+            dropZone.style.display = 'flex';
+        });
+
+        document.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter === 0) dropZone.style.display = 'none';
+        });
+
+        document.addEventListener('dragover', (e) => { e.preventDefault(); });
+
+        document.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dragCounter = 0;
+            dropZone.style.display = 'none';
+            
+            const files = e.dataTransfer.files;
+            if (files.length === 0) return;
+            uploadFiles(files);
+        });
+
+        function uploadFiles(files) {
+            uploadProgress.style.display = 'block';
+            let currentFileIndex = 0;
+
+            function uploadNext() {
+                // Если все файлы загрузились - обновляем страницу
+                if (currentFileIndex >= files.length) {
+                    location.reload();
+                    return;
+                }
+
+                const file = files[currentFileIndex];
+                progressText.innerText = `Uploading: ${file.name} (${currentFileIndex + 1}/${files.length})`;
+                progressBar.style.width = '0%';
+
+                const xhr = new XMLHttpRequest();
+                
+                // Формируем безопасный путь
+                let path = window.location.pathname;
+                if (!path.endsWith('/')) path += '/';
+                const uploadUrl = path + encodeURIComponent(file.name);
+                
+                xhr.open('PUT', uploadUrl, true);
+                
+                // Обновляем шкалу загрузки
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const percent = (e.loaded / e.total) * 100;
+                        progressBar.style.width = percent + '%';
+                    }
+                };
+                
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        currentFileIndex++;
+                        uploadNext();
+                    } else {
+                        alert(`Upload failed: ${file.name}\nStatus: ${xhr.status} Forbidden/Unauthorized`);
+                        currentFileIndex++;
+                        uploadNext();
+                    }
+                };
+                
+                xhr.onerror = () => {
+                    alert('Network error while uploading: ' + file.name);
+                    currentFileIndex++;
+                    uploadNext();
+                };
+                
+                xhr.send(file);
+            }
+
+            uploadNext();
+        }
+        {{end}}
+    </script>
 </body>
 </html>

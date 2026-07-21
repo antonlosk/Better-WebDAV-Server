@@ -118,10 +118,8 @@ func StartServer() error {
 
 		auth.ResetLoginAttempts(ip)
 
-		// ЧИТАЕМ ПРАВА ПОЛЬЗОВАТЕЛЯ
 		canUpload, canDelete := auth.GetPermissions(user)
 
-		// ПРОВЕРКА ПРАВ: ЗАГРУЗКА, СОЗДАНИЕ, ПЕРЕИМЕНОВАНИЕ
 		if r.Method == "PUT" || r.Method == "MKCOL" || r.Method == "MOVE" || r.Method == "COPY" || r.Method == "PROPPATCH" {
 			if !canUpload {
 				logs.Log("WARNING", fmt.Sprintf("Upload blocked (No Permissions): %s by %s", r.URL.Path, user))
@@ -130,7 +128,6 @@ func StartServer() error {
 			}
 		}
 
-		// ПРОВЕРКА ПРАВ: УДАЛЕНИЕ
 		if r.Method == "DELETE" {
 			if !canDelete {
 				logs.Log("WARNING", fmt.Sprintf("Deletion blocked (No Permissions): %s by %s", r.URL.Path, user))
@@ -169,7 +166,8 @@ func StartServer() error {
 						http.Redirect(sw, r, r.URL.Path+"/", http.StatusFound)
 						return
 					}
-					serveDirectoryListing(sw, r, fs.FileSystem, r.URL.Path)
+					// ПЕРЕДАЕМ canUpload и canDelete В ШАБЛОН!
+					serveDirectoryListing(sw, r, fs.FileSystem, r.URL.Path, canUpload, canDelete)
 					return
 				} else {
 					logs.Log("INFO", fmt.Sprintf("Download started: %s by %s (IP: %s)", r.URL.Path, user, ip))
@@ -252,12 +250,15 @@ type ExplorerItem struct {
 	ModTime   string
 }
 
+// ДОБАВЛЕНЫ ПОЛЯ ПРАВ ДОСТУПА ДЛЯ HTML-ШАБЛОНА
 type ExplorerData struct {
-	Path  string
-	Items []ExplorerItem
+	Path      string
+	Items     []ExplorerItem
+	CanUpload bool
+	CanDelete bool
 }
 
-func serveDirectoryListing(w http.ResponseWriter, r *http.Request, fileSystem webdav.FileSystem, path string) {
+func serveDirectoryListing(w http.ResponseWriter, r *http.Request, fileSystem webdav.FileSystem, path string, canUpload bool, canDelete bool) {
 	ctx := context.Background()
 	f, err := fileSystem.OpenFile(ctx, path, os.O_RDONLY, 0)
 	if err != nil {
@@ -308,8 +309,10 @@ func serveDirectoryListing(w http.ResponseWriter, r *http.Request, fileSystem we
 	}
 
 	data := ExplorerData{
-		Path:  path,
-		Items: items,
+		Path:      path,
+		Items:     items,
+		CanUpload: canUpload,
+		CanDelete: canDelete,
 	}
 
 	t, err := template.ParseFS(web.FS, "templates/explorer.html")
