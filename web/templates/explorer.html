@@ -63,13 +63,6 @@
                 <span class="material-symbols-rounded" style="font-size: 40px; color: var(--md-primary);">cloud</span>
                 <h2>Index of {{.Path}}</h2>
             </div>
-            
-            {{if .CanUpload}}
-            <div style="color: var(--md-on-surface-variant); font-size: 0.875rem; display: flex; align-items: center; gap: 8px; background: var(--md-surface-container-high); padding: 8px 16px; border-radius: 100px;">
-                <span class="material-symbols-rounded" style="font-size: 18px;">info</span>
-                Drag & drop files anywhere to upload
-            </div>
-            {{end}}
         </div>
 
         <div class="card">
@@ -136,7 +129,7 @@
         const uploadProgress = document.getElementById('upload-progress');
         const progressBar = document.getElementById('progress-bar');
         const progressText = document.getElementById('progress-text');
-        let dragCounter = 0; // Защита от мерцания при наведении на внутренние элементы
+        let dragCounter = 0;
 
         document.addEventListener('dragenter', (e) => {
             e.preventDefault();
@@ -167,7 +160,6 @@
             let currentFileIndex = 0;
 
             function uploadNext() {
-                // Если все файлы загрузились - обновляем страницу
                 if (currentFileIndex >= files.length) {
                     location.reload();
                     return;
@@ -179,14 +171,12 @@
 
                 const xhr = new XMLHttpRequest();
                 
-                // Формируем безопасный путь
                 let path = window.location.pathname;
                 if (!path.endsWith('/')) path += '/';
                 const uploadUrl = path + encodeURIComponent(file.name);
                 
                 xhr.open('PUT', uploadUrl, true);
                 
-                // Обновляем шкалу загрузки
                 xhr.upload.onprogress = (e) => {
                     if (e.lengthComputable) {
                         const percent = (e.loaded / e.total) * 100;
