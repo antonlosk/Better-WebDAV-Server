@@ -30,10 +30,12 @@
         .progress-bar-bg { width: 100%; background: var(--md-surface-container-high); border-radius: 100px; height: 8px; margin-top: 16px; overflow: hidden; }
         .progress-bar-fill { height: 100%; background: var(--md-primary); width: 0%; transition: width 0.2s linear; }
         
-        /* Кнопка удаления */
+        /* Кнопки действий (Удалить / Переименовать) */
         .btn-icon { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 50%; display: inline-flex; transition: 0.2s; }
-        .btn-icon:hover { background: var(--md-error-container); }
-        .btn-icon:hover .material-symbols-rounded { color: var(--md-error); }
+        .btn-icon:hover { background: var(--md-surface-container-high); }
+        .btn-icon.danger:hover { background: var(--md-error-container); }
+        .btn-icon.danger:hover .material-symbols-rounded { color: var(--md-error) !important; }
+        .btn-icon.primary:hover .material-symbols-rounded { color: var(--md-primary) !important; }
     </style>
 </head>
 <body style="display: block;">
@@ -64,7 +66,6 @@
                 <h2>Index of {{.Path}}</h2>
             </div>
             
-            <!-- КНОПКА СОЗДАНИЯ ПАПКИ (Только если есть права на загрузку) -->
             {{if .CanUpload}}
             <div>
                 <button onclick="createFolder()" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px;">
@@ -80,7 +81,8 @@
                     <th>Name</th>
                     <th>Size</th>
                     <th>Last Modified</th>
-                    {{if .CanDelete}}<th style="text-align: right;">Actions</th>{{end}}
+                    <!-- Столбец Actions показывается, если есть хотя бы одно из прав -->
+                    {{if or .CanUpload .CanDelete}}<th style="text-align: right;">Actions</th>{{end}}
                 </tr>
                 
                 {{if ne .Path "/"}}
@@ -92,7 +94,7 @@
                     </td>
                     <td class="meta-text">-</td>
                     <td class="meta-text">-</td>
-                    {{if .CanDelete}}<td></td>{{end}}
+                    {{if or .CanUpload .CanDelete}}<td></td>{{end}}
                 </tr>
                 {{end}}
                 
@@ -106,11 +108,24 @@
                     <td class="meta-text">{{.Size}}</td>
                     <td class="meta-text">{{.ModTime}}</td>
                     
-                    {{if $.CanDelete}}
-                    <td style="text-align: right;">
-                        <button onclick="deleteItem('{{.URL}}', '{{.Name}}')" class="btn-icon" title="Delete File/Folder">
+                    <!-- Блок действий -->
+                    {{if or $.CanUpload $.CanDelete}}
+                    <td style="text-align: right; white-space: nowrap;">
+                        
+                        <!-- Переименовать (Требует прав CanUpload) -->
+                        {{if $.CanUpload}}
+                        <button onclick="renameItem('{{.URL}}', '{{.Name}}')" class="btn-icon primary" title="Rename">
+                            <span class="material-symbols-rounded" style="color: var(--md-on-surface-variant); margin: 0;">edit</span>
+                        </button>
+                        {{end}}
+
+                        <!-- Удалить (Требует прав CanDelete) -->
+                        {{if $.CanDelete}}
+                        <button onclick="deleteItem('{{.URL}}', '{{.Name}}')" class="btn-icon danger" title="Delete">
                             <span class="material-symbols-rounded" style="color: var(--md-on-surface-variant); margin: 0;">delete</span>
                         </button>
+                        {{end}}
+
                     </td>
                     {{end}}
                 </tr>
@@ -119,7 +134,7 @@
         </div>
     </div>
 
-    <!-- JS СКРИПТЫ ДЛЯ ЗАГРУЗКИ, УДАЛЕНИЯ И СОЗДАНИЯ ПАПОК -->
+    <!-- JS СКРИПТЫ -->
     <script>
         {{if .CanDelete}}
         function deleteItem(url, name) {
@@ -134,10 +149,51 @@
         {{end}}
 
         {{if .CanUpload}}
-        // НОВАЯ ФУНКЦИЯ СОЗДАНИЯ ПАПКИ (MKCOL)
+        // НОВАЯ ФУНКЦИЯ ПЕРЕИМЕНОВАНИЯ (MOVE)
+        function renameItem(url, oldName) {
+            // Если это папка, отрезаем слеш на конце для красоты в prompt
+            const isDir = oldName.endsWith('/');
+            const cleanOldName = isDir ? oldName.slice(0, -1) : oldName;
+
+            const newName = prompt('Enter new name:', cleanOldName);
+            
+            // Если отменили или ввели старое имя - выходим
+            if (!newName || newName === cleanOldName) return;
+
+            if (newName.includes('/') || newName.includes('\\')) {
+                alert('Name cannot contain slashes.');
+                return;
+            }
+
+            // Формируем абсолютный URL для заголовка Destination (требование WebDAV)
+            let path = window.location.pathname;
+            if (!path.endsWith('/')) path += '/';
+            const destUrl = window.location.origin + path + encodeURIComponent(newName) + (isDir ? '/' : '');
+
+            fetch(url, { 
+                method: 'MOVE',
+                headers: {
+                    'Destination': destUrl
+                }
+            })
+            .then(res => {
+                // 201 Created или 204 No Content - успешные статусы для MOVE
+                if (res.ok || res.status === 201 || res.status === 204) {
+                    location.reload();
+                } else if (res.status === 403) {
+                    alert('Forbidden - No permission.');
+                } else if (res.status === 409) {
+                    alert('Conflict - A file with this name already exists.');
+                } else {
+                    alert('Failed to rename (HTTP Status: ' + res.status + ')');
+                }
+            }).catch(err => alert('Network error while renaming item.'));
+        }
+
+        // ФУНКЦИЯ СОЗДАНИЯ ПАПКИ (MKCOL)
         function createFolder() {
             const folderName = prompt('Enter new folder name:');
-            if (!folderName) return; // Пользователь нажал отмену или ввел пустую строку
+            if (!folderName) return;
 
             if (folderName.includes('/') || folderName.includes('\\')) {
                 alert('Folder name cannot contain slashes.');
