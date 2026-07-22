@@ -30,8 +30,8 @@
         .progress-bar-bg { width: 100%; background: var(--md-surface-container-high); border-radius: 100px; height: 8px; margin-top: 16px; overflow: hidden; }
         .progress-bar-fill { height: 100%; background: var(--md-primary); width: 0%; transition: width 0.2s linear; }
         
-        /* Кнопки действий (Удалить / Переименовать) */
-        .btn-icon { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 50%; display: inline-flex; transition: 0.2s; }
+        /* Кнопки действий (Удалить / Переименовать / Отменить) */
+        .btn-icon { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 50%; display: inline-flex; transition: 0.2s; align-items: center; justify-content: center;}
         .btn-icon:hover { background: var(--md-surface-container-high); }
         .btn-icon.danger:hover { background: var(--md-error-container); }
         .btn-icon.danger:hover .material-symbols-rounded { color: var(--md-error) !important; }
@@ -47,11 +47,17 @@
         Drop files here to upload instantly
     </div>
 
-    <!-- КАРТОЧКА ПРОГРЕССА ЗАГРУЗКИ -->
+    <!-- КАРТОЧКА ПРОГРЕССА ЗАГРУЗКИ С КНОПКОЙ ОТМЕНЫ -->
     <div id="upload-progress" class="card" style="padding: 20px; border-radius: 16px;">
-        <h3 style="margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
-            <span class="material-symbols-rounded" style="color: var(--md-primary);">upload</span> Uploading...
-        </h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h3 style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                <span class="material-symbols-rounded" style="color: var(--md-primary);">upload</span> Uploading...
+            </h3>
+            <button onclick="cancelUpload()" class="btn-icon danger" title="Cancel Upload" style="padding: 4px;">
+                <span class="material-symbols-rounded" style="color: var(--md-on-surface-variant); margin: 0; font-size: 20px;">close</span>
+            </button>
+        </div>
+        
         <div id="progress-text" style="font-size: 0.875rem; color: var(--md-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Starting upload</div>
         <div class="progress-bar-bg">
             <div id="progress-bar" class="progress-bar-fill"></div>
@@ -81,7 +87,6 @@
                     <th>Name</th>
                     <th>Size</th>
                     <th>Last Modified</th>
-                    <!-- Столбец Actions показывается, если есть хотя бы одно из прав -->
                     {{if or .CanUpload .CanDelete}}<th style="text-align: right;">Actions</th>{{end}}
                 </tr>
                 
@@ -108,24 +113,19 @@
                     <td class="meta-text">{{.Size}}</td>
                     <td class="meta-text">{{.ModTime}}</td>
                     
-                    <!-- Блок действий -->
                     {{if or $.CanUpload $.CanDelete}}
                     <td style="text-align: right; white-space: nowrap;">
-                        
-                        <!-- Переименовать (Требует прав CanUpload) -->
                         {{if $.CanUpload}}
                         <button onclick="renameItem('{{.URL}}', '{{.Name}}')" class="btn-icon primary" title="Rename">
                             <span class="material-symbols-rounded" style="color: var(--md-on-surface-variant); margin: 0;">edit</span>
                         </button>
                         {{end}}
 
-                        <!-- Удалить (Требует прав CanDelete) -->
                         {{if $.CanDelete}}
                         <button onclick="deleteItem('{{.URL}}', '{{.Name}}')" class="btn-icon danger" title="Delete">
                             <span class="material-symbols-rounded" style="color: var(--md-on-surface-variant); margin: 0;">delete</span>
                         </button>
                         {{end}}
-
                     </td>
                     {{end}}
                 </tr>
@@ -134,7 +134,6 @@
         </div>
     </div>
 
-    <!-- JS СКРИПТЫ -->
     <script>
         {{if .CanDelete}}
         function deleteItem(url, name) {
@@ -149,48 +148,33 @@
         {{end}}
 
         {{if .CanUpload}}
-        // НОВАЯ ФУНКЦИЯ ПЕРЕИМЕНОВАНИЯ (MOVE)
         function renameItem(url, oldName) {
-            // Если это папка, отрезаем слеш на конце для красоты в prompt
             const isDir = oldName.endsWith('/');
             const cleanOldName = isDir ? oldName.slice(0, -1) : oldName;
-
             const newName = prompt('Enter new name:', cleanOldName);
             
-            // Если отменили или ввели старое имя - выходим
             if (!newName || newName === cleanOldName) return;
-
             if (newName.includes('/') || newName.includes('\\')) {
                 alert('Name cannot contain slashes.');
                 return;
             }
 
-            // Формируем абсолютный URL для заголовка Destination (требование WebDAV)
             let path = window.location.pathname;
             if (!path.endsWith('/')) path += '/';
             const destUrl = window.location.origin + path + encodeURIComponent(newName) + (isDir ? '/' : '');
 
             fetch(url, { 
                 method: 'MOVE',
-                headers: {
-                    'Destination': destUrl
-                }
+                headers: { 'Destination': destUrl }
             })
             .then(res => {
-                // 201 Created или 204 No Content - успешные статусы для MOVE
-                if (res.ok || res.status === 201 || res.status === 204) {
-                    location.reload();
-                } else if (res.status === 403) {
-                    alert('Forbidden - No permission.');
-                } else if (res.status === 409) {
-                    alert('Conflict - A file with this name already exists.');
-                } else {
-                    alert('Failed to rename (HTTP Status: ' + res.status + ')');
-                }
+                if (res.ok || res.status === 201 || res.status === 204) location.reload();
+                else if (res.status === 403) alert('Forbidden - No permission.');
+                else if (res.status === 409) alert('Conflict - A file with this name already exists.');
+                else alert('Failed to rename (HTTP Status: ' + res.status + ')');
             }).catch(err => alert('Network error while renaming item.'));
         }
 
-        // ФУНКЦИЯ СОЗДАНИЯ ПАПКИ (MKCOL)
         function createFolder() {
             const folderName = prompt('Enter new folder name:');
             if (!folderName) return;
@@ -206,22 +190,34 @@
 
             fetch(targetUrl, { method: 'MKCOL' })
                 .then(res => {
-                    if (res.ok || res.status === 201) {
-                        location.reload();
-                    } else if (res.status === 405) {
-                        alert('A file or folder with this name already exists.');
-                    } else {
-                        alert('Failed to create folder (HTTP Status: ' + res.status + ')');
-                    }
+                    if (res.ok || res.status === 201) location.reload();
+                    else if (res.status === 405) alert('A file or folder with this name already exists.');
+                    else alert('Failed to create folder (HTTP Status: ' + res.status + ')');
                 }).catch(err => alert('Network error while creating folder.'));
         }
 
-        // ЛОГИКА DRAG & DROP
+        // ==========================================
+        // ЛОГИКА ЗАГРУЗКИ И ОТМЕНЫ (DRAG & DROP)
+        // ==========================================
         const dropZone = document.getElementById('drop-zone');
         const uploadProgress = document.getElementById('upload-progress');
         const progressBar = document.getElementById('progress-bar');
         const progressText = document.getElementById('progress-text');
+        
         let dragCounter = 0;
+        let currentXhr = null;         // Хранит текущий запрос загрузки
+        let isUploadCancelled = false; // Флаг отмены очереди загрузок
+
+        // НОВАЯ ФУНКЦИЯ ОТМЕНЫ ЗАГРУЗКИ
+        function cancelUpload() {
+            isUploadCancelled = true;
+            if (currentXhr) {
+                currentXhr.abort(); // Мгновенно прерывает соединение с сервером
+            }
+            uploadProgress.style.display = 'none';
+            // Перезагружаем страницу, чтобы пользователь увидел файлы, которые успели загрузиться до отмены
+            location.reload(); 
+        }
 
         document.addEventListener('dragenter', (e) => {
             e.preventDefault();
@@ -250,8 +246,12 @@
         function uploadFiles(files) {
             uploadProgress.style.display = 'block';
             let currentFileIndex = 0;
+            isUploadCancelled = false; // Сбрасываем флаг при новой загрузке
 
             function uploadNext() {
+                // Если загрузка отменена пользователем, прерываем цикл очереди
+                if (isUploadCancelled) return;
+
                 if (currentFileIndex >= files.length) {
                     location.reload();
                     return;
@@ -261,39 +261,46 @@
                 progressText.innerText = `Uploading: ${file.name} (${currentFileIndex + 1}/${files.length})`;
                 progressBar.style.width = '0%';
 
-                const xhr = new XMLHttpRequest();
+                currentXhr = new XMLHttpRequest();
                 
                 let path = window.location.pathname;
                 if (!path.endsWith('/')) path += '/';
                 const uploadUrl = path + encodeURIComponent(file.name);
                 
-                xhr.open('PUT', uploadUrl, true);
+                currentXhr.open('PUT', uploadUrl, true);
                 
-                xhr.upload.onprogress = (e) => {
-                    if (e.lengthComputable) {
+                currentXhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable && !isUploadCancelled) {
                         const percent = (e.loaded / e.total) * 100;
                         progressBar.style.width = percent + '%';
                     }
                 };
                 
-                xhr.onload = () => {
-                    if (xhr.status >= 200 && xhr.status < 300) {
+                currentXhr.onload = () => {
+                    if (isUploadCancelled) return;
+                    if (currentXhr.status >= 200 && currentXhr.status < 300) {
                         currentFileIndex++;
                         uploadNext();
                     } else {
-                        alert(`Upload failed: ${file.name}\nStatus: ${xhr.status} Forbidden/Unauthorized`);
+                        alert(`Upload failed: ${file.name}\nStatus: ${currentXhr.status} Forbidden/Unauthorized`);
                         currentFileIndex++;
                         uploadNext();
                     }
                 };
+
+                // Обработчик события abort (отмена)
+                currentXhr.onabort = () => {
+                    console.log('Upload aborted by user.');
+                };
                 
-                xhr.onerror = () => {
+                currentXhr.onerror = () => {
+                    if (isUploadCancelled) return;
                     alert('Network error while uploading: ' + file.name);
                     currentFileIndex++;
                     uploadNext();
                 };
                 
-                xhr.send(file);
+                currentXhr.send(file);
             }
 
             uploadNext();
