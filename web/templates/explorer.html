@@ -14,12 +14,12 @@
         #drop-zone {
             display: none;
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(103, 80, 164, 0.95); /* var(--md-primary) с прозрачностью */
+            background: rgba(103, 80, 164, 0.95);
             color: white; z-index: 9999;
             flex-direction: column; justify-content: center; align-items: center;
             font-size: 2rem; font-weight: 500; text-align: center;
         }
-        #drop-zone * { pointer-events: none; } /* Важно для избежания мерцания */
+        #drop-zone * { pointer-events: none; }
         #drop-zone .material-symbols-rounded { font-size: 80px; margin-bottom: 24px; }
 
         /* Прогресс-бар загрузки */
@@ -63,6 +63,15 @@
                 <span class="material-symbols-rounded" style="font-size: 40px; color: var(--md-primary);">cloud</span>
                 <h2>Index of {{.Path}}</h2>
             </div>
+            
+            <!-- КНОПКА СОЗДАНИЯ ПАПКИ (Только если есть права на загрузку) -->
+            {{if .CanUpload}}
+            <div>
+                <button onclick="createFolder()" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px;">
+                    <span class="material-symbols-rounded" style="font-size: 20px; margin: 0;">create_new_folder</span> New Folder
+                </button>
+            </div>
+            {{end}}
         </div>
 
         <div class="card">
@@ -110,7 +119,7 @@
         </div>
     </div>
 
-    <!-- JS СКРИПТЫ ДЛЯ ЗАГРУЗКИ И УДАЛЕНИЯ -->
+    <!-- JS СКРИПТЫ ДЛЯ ЗАГРУЗКИ, УДАЛЕНИЯ И СОЗДАНИЯ ПАПОК -->
     <script>
         {{if .CanDelete}}
         function deleteItem(url, name) {
@@ -125,6 +134,33 @@
         {{end}}
 
         {{if .CanUpload}}
+        // НОВАЯ ФУНКЦИЯ СОЗДАНИЯ ПАПКИ (MKCOL)
+        function createFolder() {
+            const folderName = prompt('Enter new folder name:');
+            if (!folderName) return; // Пользователь нажал отмену или ввел пустую строку
+
+            if (folderName.includes('/') || folderName.includes('\\')) {
+                alert('Folder name cannot contain slashes.');
+                return;
+            }
+
+            let path = window.location.pathname;
+            if (!path.endsWith('/')) path += '/';
+            const targetUrl = path + encodeURIComponent(folderName);
+
+            fetch(targetUrl, { method: 'MKCOL' })
+                .then(res => {
+                    if (res.ok || res.status === 201) {
+                        location.reload();
+                    } else if (res.status === 405) {
+                        alert('A file or folder with this name already exists.');
+                    } else {
+                        alert('Failed to create folder (HTTP Status: ' + res.status + ')');
+                    }
+                }).catch(err => alert('Network error while creating folder.'));
+        }
+
+        // ЛОГИКА DRAG & DROP
         const dropZone = document.getElementById('drop-zone');
         const uploadProgress = document.getElementById('upload-progress');
         const progressBar = document.getElementById('progress-bar');
