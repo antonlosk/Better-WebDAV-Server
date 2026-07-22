@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gorilla/sessions"
@@ -28,53 +27,6 @@ var (
 	store    *sessions.CookieStore
 	uiServer *http.Server
 )
-
-var (
-	loginAttempts = make(map[string]int)
-	lockoutTimes  = make(map[string]time.Time)
-	loginMu       sync.Mutex
-)
-
-func isLockedOut(ip string) bool {
-	loginMu.Lock()
-	defer loginMu.Unlock()
-	
-	if lockoutTime, exists := lockoutTimes[ip]; exists {
-		if time.Now().Before(lockoutTime) {
-			return true
-		}
-		delete(lockoutTimes, ip)
-		delete(loginAttempts, ip)
-	}
-	return false
-}
-
-func recordFailedLogin(ip string) {
-	loginMu.Lock()
-	defer loginMu.Unlock()
-	
-	loginAttempts[ip]++
-	if loginAttempts[ip] >= 5 {
-		lockoutTimes[ip] = time.Now().Add(5 * time.Minute)
-		logs.Log("WARNING", "Brute-force protection: IP blocked for 5 minutes - "+ip)
-	}
-}
-
-func resetLoginAttempts(ip string) {
-	loginMu.Lock()
-	defer loginMu.Unlock()
-	
-	delete(loginAttempts, ip)
-	delete(lockoutTimes, ip)
-}
-
-func getClientIP(r *http.Request) string {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return ip
-}
 
 func initSessionStore() {
 	keyPath := "data/session.key"
@@ -106,6 +58,7 @@ func initSessionStore() {
 }
 
 type contextKey string
+
 const csrfContextKey contextKey = "csrf_token"
 
 func generateCSRFToken() string {
@@ -274,9 +227,10 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := getClientIP(r)
+	ip := auth.GetClientIP(r)
 
-	if isLockedOut(ip) {
+	// Используем централизованную проверку блокировки из БД
+	if auth.IsLockedOut(ip) {
 		renderStandalone(w, r, "login", map[string]interface{}{"Error": "Too many failed attempts. Try again in 5 minutes."})
 		return
 	}
@@ -285,7 +239,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		user, pass := r.FormValue("username"), r.FormValue("password")
 
 		if auth.AuthenticateAdmin(user, pass) {
-			resetLoginAttempts(ip) 
+			auth.ResetLoginAttempts(ip)
 
 			session, _ := store.Get(r, "admin-session")
 			session.Values["authenticated"] = true
@@ -299,7 +253,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		recordFailedLogin(ip) 
+		auth.RecordFailedLogin(ip, "Web UI")
 		logs.Log("WARNING", fmt.Sprintf("Failed admin login attempt from IP: %s", ip))
 		renderStandalone(w, r, "login", map[string]interface{}{"Error": "Invalid credentials"})
 		return
@@ -395,7 +349,6 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		newUIPort := r.FormValue("web_ui_port")
 		newLogRetention := r.FormValue("log_retention")
 
-		// Значение по умолчанию, если форма пришла пустой
 		if newLogRetention == "" {
 			newLogRetention = "1_year"
 		}
@@ -423,14 +376,13 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 					SharedPath:   newPath,
 					LogRetention: newLogRetention,
 				})
-				
+
 				if err != nil {
 					logs.Log("ERROR", "Failed to save configuration: "+err.Error())
 					msg = "Error: Failed to save settings to database!"
 				} else {
-					// Запускаем чистку после сохранения
-					go logs.CleanOldLogs() 
-					
+					go logs.CleanOldLogs()
+
 					logs.Log("INFO", "Configuration changed. Restarting WebDAV...")
 					webdav.RestartServer()
 					msg = "Settings saved successfully!"
@@ -457,10 +409,14 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 
 		if action == "add" {
 			u, p := r.FormValue("username"), r.FormValue("password")
-			
+
 			upInt, delInt := 0, 0
-			if r.FormValue("can_upload") == "on" { upInt = 1 }
-			if r.FormValue("can_delete") == "on" { delInt = 1 }
+			if r.FormValue("can_upload") == "on" {
+				upInt = 1
+			}
+			if r.FormValue("can_delete") == "on" {
+				delInt = 1
+			}
 
 			hash, err := auth.HashPassword(p)
 			if err != nil {
@@ -525,7 +481,6 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, r, "users", map[string]interface{}{"Users": users})
 }
 
-// ИЗМЕНЕННАЯ ФУНКЦИЯ ЛОГОВ (Теперь работает с файлом)
 func logsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("action") == "clear" {
 		logs.ClearLogs()
@@ -534,11 +489,9 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.FormValue("action") == "download" {
 		w.Header().Set("Content-Disposition", "attachment; filename=server_logs.txt")
-		// Отдаем физический файл напрямую! Быстро и эффективно.
 		http.ServeFile(w, r, "logs/server.log")
 		return
 	}
-	
-	// Выводим 150 последних строк из файла в панель управления
+
 	renderTemplate(w, r, "logs", map[string]interface{}{"Logs": logs.GetLogs(150)})
 }
