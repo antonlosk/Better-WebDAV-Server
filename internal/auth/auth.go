@@ -3,60 +3,93 @@ package auth
 import (
 	"betterwebdav/internal/database"
 	"betterwebdav/internal/logs"
+	"database/sql"
 	"net"
 	"net/http"
-	"sync"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
-var (
-	loginAttempts = make(map[string]int)
-	lockoutTimes  = make(map[string]time.Time)
-	loginMu       sync.Mutex
-)
+// ==========================================
+// ГЛОБАЛЬНЫЙ БЛОК ЗАЩИТЫ ОТ БРУТФОРСА (ПЕРСИСТЕНТНЫЙ В БД)
+// ==========================================
 
 func IsLockedOut(ip string) bool {
-	loginMu.Lock()
-	defer loginMu.Unlock()
-
-	if lockoutTime, exists := lockoutTimes[ip]; exists {
-		if time.Now().Before(lockoutTime) {
-			return true
-		}
-		delete(lockoutTimes, ip)
-		delete(loginAttempts, ip)
+	var lockoutUntil int64
+	err := database.DB.QueryRow("SELECT lockout_until FROM login_tracking WHERE ip = ?", ip).Scan(&lockoutUntil)
+	
+	if err == sql.ErrNoRows {
+		return false // Записей об этом IP нет
 	}
+	if err != nil {
+		logs.Log("ERROR", "Failed to query lockout status: "+err.Error())
+		return false
+	}
+
+	// Если текущее время меньше времени блокировки (Unix seconds)
+	if time.Now().Unix() < lockoutUntil {
+		return true
+	}
+
+	// Если время блокировки вышло — удаляем этот IP из "черного списка"
+	database.DB.Exec("DELETE FROM login_tracking WHERE ip = ?", ip)
 	return false
 }
 
 func RecordFailedLogin(ip string, service string) {
-	loginMu.Lock()
-	defer loginMu.Unlock()
+	// UPSERT: Если IP нет, добавляем с attempts=1. Если есть — увеличиваем счетчик.
+	_, err := database.DB.Exec(`
+		INSERT INTO login_tracking (ip, attempts, lockout_until) 
+		VALUES (?, 1, 0)
+		ON CONFLICT(ip) DO UPDATE SET attempts = attempts + 1
+	`, ip)
+	
+	if err != nil {
+		logs.Log("ERROR", "Failed to update login tracking: "+err.Error())
+		return
+	}
 
-	loginAttempts[ip]++
-	if loginAttempts[ip] >= 5 {
-		lockoutTimes[ip] = time.Now().Add(5 * time.Minute)
+	// Проверяем, достигло ли количество попыток лимита
+	var attempts int
+	database.DB.QueryRow("SELECT attempts FROM login_tracking WHERE ip = ?", ip).Scan(&attempts)
+
+	if attempts >= 5 {
+		// Блокируем на 5 минут вперед
+		lockoutTime := time.Now().Add(5 * time.Minute).Unix()
+		database.DB.Exec("UPDATE login_tracking SET lockout_until = ? WHERE ip = ?", lockoutTime, ip)
 		logs.Log("WARNING", "Brute-force protection: IP blocked for 5 minutes via "+service+" - "+ip)
 	}
 }
 
 func ResetLoginAttempts(ip string) {
-	loginMu.Lock()
-	defer loginMu.Unlock()
-
-	delete(loginAttempts, ip)
-	delete(lockoutTimes, ip)
+	// При успешном входе полностью стираем историю попыток для этого IP
+	database.DB.Exec("DELETE FROM login_tracking WHERE ip = ?", ip)
 }
 
 func GetClientIP(r *http.Request) string {
+	// 1. Ищем реальный IP, если сервер стоит за прокси (Nginx/Cloudflare)
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
+		// Заголовок может содержать несколько IP через запятую
+		parts := strings.Split(ip, ",")
+		return strings.TrimSpace(parts[0])
+	}
+
+	// 2. Если прокси нет, используем стандартный адрес сокета
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return ip
 }
+
+// ==========================================
+// ЛОГИКА АВТОРИЗАЦИИ
+// ==========================================
 
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 10)
@@ -101,7 +134,6 @@ func AuthenticateWebDAV(username, password string) bool {
 	return CheckPasswordHash(password, hash)
 }
 
-// НОВАЯ ФУНКЦИЯ: Получение прав пользователя
 func GetPermissions(username string) (canUpload bool, canDelete bool) {
 	var up, del int
 	err := database.DB.QueryRow("SELECT can_upload, can_delete FROM webdav_users WHERE username = ?", username).Scan(&up, &del)

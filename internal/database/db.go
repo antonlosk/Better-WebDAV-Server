@@ -43,6 +43,12 @@ func InitDB() {
 		shared_path TEXT,
 		log_retention TEXT DEFAULT '1_year'
 	);
+	-- НОВАЯ ТАБЛИЦА: ПЕРМАНЕНТНАЯ ЗАЩИТА ОТ БРУТФОРСА
+	CREATE TABLE IF NOT EXISTS login_tracking (
+		ip TEXT PRIMARY KEY,
+		attempts INTEGER DEFAULT 0,
+		lockout_until INTEGER DEFAULT 0
+	);
 	`
 	_, err = DB.Exec(createTables)
 	if err != nil {
@@ -51,8 +57,6 @@ func InitDB() {
 
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_upload INTEGER DEFAULT 1")
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_delete INTEGER DEFAULT 1")
-	
-	// Изменили fallback-значение для старых баз на 1_year
 	DB.Exec("ALTER TABLE settings ADD COLUMN log_retention TEXT DEFAULT '1_year'")
 }
 
