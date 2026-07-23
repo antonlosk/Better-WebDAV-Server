@@ -63,6 +63,62 @@ func Log(level, message string) {
 	log.Printf("[%s] %s\n", level, message)
 }
 
+// Вспомогательная функция для эффективного чтения N последних строк с конца файла
+func getTailLines(file *os.File, limit int) []string {
+	var lines []string
+	stat, err := file.Stat()
+	if err != nil {
+		return nil
+	}
+
+	filesize := stat.Size()
+	if filesize == 0 {
+		return nil
+	}
+
+	var cursor int64 = filesize
+	var bufSize int64 = 32768 // Читаем блоками по 32 KB (минимальное потребление ОЗУ)
+	var leftover string
+
+	for cursor > 0 && len(lines) < limit {
+		if cursor < bufSize {
+			bufSize = cursor
+		}
+		cursor -= bufSize
+
+		buf := make([]byte, bufSize)
+		file.ReadAt(buf, cursor)
+
+		// Склеиваем с куском от предыдущего блока
+		chunk := string(buf) + leftover
+		parts := strings.Split(chunk, "\n")
+
+		// Самая верхняя часть строки может быть неполной
+		leftover = parts[0]
+
+		// Идем с конца в начало и собираем строки
+		for i := len(parts) - 1; i > 0; i-- {
+			line := strings.TrimSpace(parts[i])
+			if line != "" {
+				lines = append(lines, line)
+				if len(lines) == limit {
+					break
+				}
+			}
+		}
+	}
+
+	// Забираем самый первый огрызок, если дошли до начала файла
+	if cursor == 0 && leftover != "" && len(lines) < limit {
+		line := strings.TrimSpace(leftover)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	return lines
+}
+
 func GetLogs(limit int) []LogEntry {
 	logMu.Lock()
 	defer logMu.Unlock()
@@ -74,21 +130,14 @@ func GetLogs(limit int) []LogEntry {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	var allLines []string
-	for scanner.Scan() {
-		allLines = append(allLines, scanner.Text())
-	}
+	// Читаем файл с конца блоками (максимально экономит память)
+	lines := getTailLines(file, limit)
 
 	var entries []LogEntry
-	start := len(allLines) - limit
-	if start < 0 {
-		start = 0
-	}
-
 	idCounter := 1
-	for i := len(allLines) - 1; i >= start; i-- {
-		line := allLines[i]
+
+	// Строки в `lines` уже отсортированы от новых к старым благодаря getTailLines
+	for _, line := range lines {
 		if len(line) < 20 {
 			continue
 		}
@@ -117,34 +166,28 @@ func GetLogs(limit int) []LogEntry {
 	return entries
 }
 
-// ОЧИСТКА БЕЗ ОСТАВЛЕНИЯ ЗАПИСЕЙ
 func ClearLogs() {
 	logMu.Lock()
 	defer logMu.Unlock()
 
 	logPath := filepath.Join("logs", "server.log")
 
-	// 1. Закрываем текущий дескриптор
 	if logFile != nil {
 		logFile.Close()
 	}
 
-	// 2. Жестко перезаписываем файл пустотой (0 байт)
 	os.WriteFile(logPath, []byte(""), 0666)
 
-	// 3. Открываем чистый файл заново для работы логгера
 	var err error
 	logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err == nil {
 		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 	}
-	
-	// Мы убрали log.Printf("Logs cleared..."), теперь файл остается абсолютно пустым.
 }
 
 func CleanOldLogs() {
 	cfg := config.GetConfig()
-	
+
 	if cfg.LogRetention == "never" {
 		return
 	}
@@ -176,36 +219,40 @@ func CleanOldLogs() {
 	if err != nil {
 		return
 	}
+	defer file.Close()
 
-	var keptLines []string
+	// Открываем временный файл для записи
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		return
+	}
+
+	// Потоковое чтение и запись (O(1) оперативной памяти)
 	scanner := bufio.NewScanner(file)
-	
 	for scanner.Scan() {
 		line := scanner.Text()
 		if len(line) >= 19 {
 			if t, err := time.Parse(layout, line[:19]); err == nil {
 				if t.Before(cutoff) {
-					continue 
+					continue // Пропускаем старые записи
 				}
 			}
 		}
-		keptLines = append(keptLines, line)
+		// Записываем актуальную строку напрямую на диск
+		tmpFile.WriteString(line + "\n")
 	}
+	tmpFile.Close()
 	file.Close()
 
 	if logFile != nil {
 		logFile.Close()
 	}
 
-	tmp, err := os.Create(tmpPath)
-	if err == nil {
-		for _, l := range keptLines {
-			tmp.WriteString(l + "\n")
-		}
-		tmp.Close()
-		os.Rename(tmpPath, logPath) 
-	}
+	// Подменяем старый файл новым
+	os.Rename(tmpPath, logPath)
 
 	logFile, _ = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	if logFile != nil {
+		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	}
 }
