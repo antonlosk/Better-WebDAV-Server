@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gorilla/sessions"
@@ -26,6 +27,7 @@ import (
 var (
 	store    *sessions.CookieStore
 	uiServer *http.Server
+	uiMu     sync.Mutex
 )
 
 func initSessionStore() {
@@ -108,11 +110,7 @@ func getCSRFField(r *http.Request) template.HTML {
 	return template.HTML(fmt.Sprintf(`<input type="hidden" name="csrf_token" value="%s">`, html.EscapeString(token)))
 }
 
-func StartWebServer() {
-	initSessionStore()
-
-	cfg := config.GetConfig()
-
+func createMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/static/web/", http.StripPrefix("/static/web/", http.FileServer(http.FS(web.FS))))
 
@@ -121,15 +119,26 @@ func StartWebServer() {
 	mux.HandleFunc("/login", loginHandler)
 	mux.HandleFunc("/logout", logoutHandler)
 	mux.HandleFunc("/settings", authMiddleware(settingsHandler))
-	mux.HandleFunc("/admins", authMiddleware(adminsHandler)) // Route for Administrator Management
+	mux.HandleFunc("/admins", authMiddleware(adminsHandler))
 	mux.HandleFunc("/users", authMiddleware(usersHandler))
 	mux.HandleFunc("/logs", authMiddleware(logsHandler))
 	mux.HandleFunc("/api/control", authMiddleware(controlHandler))
 
+	return mux
+}
+
+func StartWebServer() {
+	initSessionStore()
+
+	cfg := config.GetConfig()
+	mux := createMux()
+
+	uiMu.Lock()
 	uiServer = &http.Server{
 		Addr:    ":" + cfg.WebUIPort,
 		Handler: csrfProtect(mux),
 	}
+	uiMu.Unlock()
 
 	logs.Log("INFO", "Web Management UI starting on port "+cfg.WebUIPort)
 
@@ -141,12 +150,43 @@ func StartWebServer() {
 }
 
 func StopWebServer() {
+	uiMu.Lock()
+	defer uiMu.Unlock()
+
 	if uiServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		uiServer.Shutdown(ctx)
 		logs.Log("INFO", "Web Management UI stopped")
 	}
+}
+
+// RestartWebServer gracefully restarts the Web UI server on the newly configured port
+func RestartWebServer() {
+	uiMu.Lock()
+	defer uiMu.Unlock()
+
+	if uiServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		uiServer.Shutdown(ctx)
+	}
+
+	cfg := config.GetConfig()
+	mux := createMux()
+
+	uiServer = &http.Server{
+		Addr:    ":" + cfg.WebUIPort,
+		Handler: csrfProtect(mux),
+	}
+
+	logs.Log("INFO", "Web Management UI restarted on port "+cfg.WebUIPort)
+
+	go func() {
+		if err := uiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logs.Log("ERROR", "Failed to restart Web Management UI: "+err.Error())
+		}
+	}()
 }
 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -343,6 +383,8 @@ func controlHandler(w http.ResponseWriter, r *http.Request) {
 
 func settingsHandler(w http.ResponseWriter, r *http.Request) {
 	msg := ""
+	newUIPortToRedirect := ""
+
 	if r.Method == "POST" {
 		newPath := r.FormValue("shared_path")
 		newDavPort := r.FormValue("webdav_port")
@@ -363,13 +405,43 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		} else if _, err := os.Stat(newPath); os.IsNotExist(err) {
 			msg = "Error: Directory does not exist!"
 		} else {
-			l, err := net.Listen("tcp", ":"+newDavPort)
-			if err != nil && newDavPort != config.GetConfig().WebDAVPort {
+			currentCfg := config.GetConfig()
+
+			// Check WebDAV port availability if changed
+			var lDav net.Listener
+			var errListenDav error
+			if newDavPort != currentCfg.WebDAVPort {
+				lDav, errListenDav = net.Listen("tcp", ":"+newDavPort)
+			}
+
+			// Check Web UI port availability if changed
+			var lUI net.Listener
+			var errListenUI error
+			if newUIPort != currentCfg.WebUIPort {
+				lUI, errListenUI = net.Listen("tcp", ":"+newUIPort)
+			}
+
+			if errListenDav != nil {
 				msg = "Error: WebDAV Port is already in use!"
-			} else {
-				if l != nil {
-					l.Close()
+				if lUI != nil {
+					lUI.Close()
 				}
+			} else if errListenUI != nil {
+				msg = "Error: Web UI Port is already in use!"
+				if lDav != nil {
+					lDav.Close()
+				}
+			} else {
+				if lDav != nil {
+					lDav.Close()
+				}
+				if lUI != nil {
+					lUI.Close()
+				}
+
+				uiPortChanged := (newUIPort != currentCfg.WebUIPort)
+				davChanged := (newDavPort != currentCfg.WebDAVPort || newPath != currentCfg.SharedPath)
+
 				err := config.SaveConfig(config.Settings{
 					WebDAVPort:   newDavPort,
 					WebUIPort:    newUIPort,
@@ -383,23 +455,39 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 				} else {
 					go logs.CleanOldLogs()
 
-					logs.Log("INFO", "Configuration changed. Restarting WebDAV...")
-					webdav.RestartServer()
-					msg = "Settings saved successfully!"
+					if davChanged {
+						logs.Log("INFO", "WebDAV settings changed. Restarting WebDAV...")
+						webdav.RestartServer()
+					}
+
+					if uiPortChanged {
+						newUIPortToRedirect = newUIPort
+						msg = fmt.Sprintf("Settings saved! Web UI port changed to %s. Redirecting...", newUIPort)
+						// Schedule UI server restart shortly after response is delivered
+						go func() {
+							time.Sleep(500 * time.Millisecond)
+							RestartWebServer()
+						}()
+					} else {
+						msg = "Settings saved successfully!"
+					}
 				}
 			}
 		}
 	}
-	renderTemplate(w, r, "settings", map[string]interface{}{"Config": config.GetConfig(), "Message": msg})
+
+	renderTemplate(w, r, "settings", map[string]interface{}{
+		"Config":    config.GetConfig(),
+		"Message":   msg,
+		"NewUIPort": newUIPortToRedirect,
+	})
 }
 
-// AdminUser represents administrator record
 type AdminUser struct {
 	ID       int
 	Username string
 }
 
-// adminsHandler handles Administrator Management CRUD
 func adminsHandler(w http.ResponseWriter, r *http.Request) {
 	msg := ""
 	isError := false

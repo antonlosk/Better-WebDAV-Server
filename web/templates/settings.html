@@ -21,7 +21,6 @@
             <div class="form-group" style="flex: 1;">
                 <label>Web Interface Port</label>
                 <input type="number" name="web_ui_port" value="{{.Config.WebUIPort}}" required>
-                <small><span class="material-symbols-rounded" style="font-size: 14px;">warning</span> Manual restart required.</small>
             </div>
         </div>
 
@@ -49,4 +48,14 @@
         </button>
     </form>
 </div>
+
+<!-- АВТОМАТИЧЕСКИЙ РЕДИРЕКТ НА НОВЫЙ ПОРТ ПРИ ЕГО ИЗМЕНЕНИИ -->
+{{if .NewUIPort}}
+<script>
+    setTimeout(() => {
+        const newPort = "{{.NewUIPort}}";
+        window.location.href = window.location.protocol + "//" + window.location.hostname + ":" + newPort + "/settings";
+    }, 1000);
+</script>
+{{end}}
 {{end}}
