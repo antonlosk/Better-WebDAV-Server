@@ -15,7 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic" // НОВЫЙ ПАКЕТ ДЛЯ АТОМАРНЫХ СЧЕТЧИКОВ
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/webdav"
@@ -27,7 +27,7 @@ var (
 	status          = "Stopped"
 	startTime       time.Time
 	serverDone      chan struct{}
-	activeTransfers atomic.Int32 // СЧЕТЧИК АКТИВНЫХ ТРАНЗАКЦИЙ (Загрузки и Скачивания)
+	activeTransfers atomic.Int32
 )
 
 type safeResponseWriter struct {
@@ -98,7 +98,8 @@ func StartServer() error {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		ip := auth.GetClientIP(r)
 
-		if auth.IsLockedOut(ip) {
+		// Isolate lockout check specifically for "webdav" service
+		if auth.IsLockedOut(ip, "webdav") {
 			http.Error(w, "Too many failed attempts. Try again later.", http.StatusTooManyRequests)
 			return
 		}
@@ -111,14 +112,14 @@ func StartServer() error {
 		}
 
 		if !auth.AuthenticateWebDAV(user, pass) {
-			auth.RecordFailedLogin(ip, "WebDAV")
+			auth.RecordFailedLogin(ip, "webdav")
 			logs.Log("WARNING", fmt.Sprintf("Failed WebDAV auth attempt from IP: %s", ip))
 			w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV Server"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		auth.ResetLoginAttempts(ip)
+		auth.ResetLoginAttempts(ip, "webdav")
 
 		canUpload, canDelete := auth.GetPermissions(user)
 
@@ -140,10 +141,9 @@ func StartServer() error {
 
 		sw := &safeResponseWriter{ResponseWriter: w}
 
-		// ОТСЛЕЖИВАНИЕ АКТИВНЫХ ЗАГРУЗОК (PUT)
 		if r.Method == "PUT" {
-			activeTransfers.Add(1) // Добавляем транзакцию
-			defer activeTransfers.Add(-1) // Освобождаем транзакцию при выходе
+			activeTransfers.Add(1)
+			defer activeTransfers.Add(-1)
 
 			r.Header.Set("Connection", "close")
 			sw.Header().Set("Connection", "close")
@@ -175,7 +175,6 @@ func StartServer() error {
 					serveDirectoryListing(sw, r, fs.FileSystem, r.URL.Path, canUpload, canDelete)
 					return
 				} else {
-					// ОТСЛЕЖИВАНИЕ АКТИВНЫХ СКАЧИВАНИЙ ФАЙЛОВ (GET)
 					activeTransfers.Add(1)
 					defer activeTransfers.Add(-1)
 
@@ -236,19 +235,16 @@ func StopServer() {
 	done := serverDone
 	mu.Unlock()
 
-	// 1. Проверяем счетчик активных транзакций
 	transfers := activeTransfers.Load()
 	if transfers > 0 {
 		logs.Log("INFO", fmt.Sprintf("Graceful Shutdown: Waiting for %d active transfer(s) to finish...", transfers))
 	}
 
-	// 2. Даем целых 5 минут на завершение загрузок больших файлов
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	err := srv.Shutdown(ctx)
 	if err != nil {
-		// Если за 5 минут загрузка так и не завершилась, сервер принудительно разорвет соединение
 		logs.Log("WARNING", "WebDAV Server forced to shutdown: "+err.Error())
 	}
 	<-done

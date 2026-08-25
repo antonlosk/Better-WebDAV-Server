@@ -161,7 +161,6 @@ func StopWebServer() {
 	}
 }
 
-// RestartWebServer gracefully restarts the Web UI server on the newly configured port
 func RestartWebServer() {
 	uiMu.Lock()
 	defer uiMu.Unlock()
@@ -270,7 +269,8 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	ip := auth.GetClientIP(r)
 
-	if auth.IsLockedOut(ip) {
+	// Isolate lockout check specifically for "admin" service
+	if auth.IsLockedOut(ip, "admin") {
 		renderStandalone(w, r, "login", map[string]interface{}{"Error": "Too many failed attempts. Try again in 5 minutes."})
 		return
 	}
@@ -279,7 +279,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		user, pass := r.FormValue("username"), r.FormValue("password")
 
 		if auth.AuthenticateAdmin(user, pass) {
-			auth.ResetLoginAttempts(ip)
+			auth.ResetLoginAttempts(ip, "admin")
 
 			session, _ := store.Get(r, "admin-session")
 			session.Values["authenticated"] = true
@@ -293,7 +293,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		auth.RecordFailedLogin(ip, "Web UI")
+		auth.RecordFailedLogin(ip, "admin")
 		logs.Log("WARNING", fmt.Sprintf("Failed admin login attempt from IP: %s", ip))
 		renderStandalone(w, r, "login", map[string]interface{}{"Error": "Invalid credentials"})
 		return
@@ -407,14 +407,12 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			currentCfg := config.GetConfig()
 
-			// Check WebDAV port availability if changed
 			var lDav net.Listener
 			var errListenDav error
 			if newDavPort != currentCfg.WebDAVPort {
 				lDav, errListenDav = net.Listen("tcp", ":"+newDavPort)
 			}
 
-			// Check Web UI port availability if changed
 			var lUI net.Listener
 			var errListenUI error
 			if newUIPort != currentCfg.WebUIPort {
@@ -463,7 +461,6 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 					if uiPortChanged {
 						newUIPortToRedirect = newUIPort
 						msg = fmt.Sprintf("Settings saved! Web UI port changed to %s. Redirecting...", newUIPort)
-						// Schedule UI server restart shortly after response is delivered
 						go func() {
 							time.Sleep(500 * time.Millisecond)
 							RestartWebServer()
@@ -568,7 +565,7 @@ func adminsHandler(w http.ResponseWriter, r *http.Request) {
 					msg = "Failed to process password."
 					isError = true
 				} else {
-					_, err := database.DB.Exec("UPDATE admin_users SET password_hash = ? WHERE id = ?", hash, id)
+					_, err = database.DB.Exec("UPDATE admin_users SET password_hash = ? WHERE id = ?", hash, id)
 					if err != nil {
 						logs.Log("ERROR", "Failed to update admin password: "+err.Error())
 						msg = "Failed to update password."

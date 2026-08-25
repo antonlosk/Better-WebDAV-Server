@@ -13,73 +13,64 @@ import (
 )
 
 // ==========================================
-// ГЛОБАЛЬНЫЙ БЛОК ЗАЩИТЫ ОТ БРУТФОРСА (ПЕРСИСТЕНТНЫЙ В БД)
+// SERVICE-ISOLATED BRUTE-FORCE PROTECTION
 // ==========================================
 
-func IsLockedOut(ip string) bool {
+func IsLockedOut(ip string, service string) bool {
 	var lockoutUntil int64
-	err := database.DB.QueryRow("SELECT lockout_until FROM login_tracking WHERE ip = ?", ip).Scan(&lockoutUntil)
-	
+	err := database.DB.QueryRow("SELECT lockout_until FROM login_tracking WHERE ip = ? AND service = ?", ip, service).Scan(&lockoutUntil)
+
 	if err == sql.ErrNoRows {
-		return false // Записей об этом IP нет
+		return false
 	}
 	if err != nil {
 		logs.Log("ERROR", "Failed to query lockout status: "+err.Error())
 		return false
 	}
 
-	// Если текущее время меньше времени блокировки (Unix seconds)
 	if time.Now().Unix() < lockoutUntil {
 		return true
 	}
 
-	// Если время блокировки вышло — удаляем этот IP из "черного списка"
-	database.DB.Exec("DELETE FROM login_tracking WHERE ip = ?", ip)
+	database.DB.Exec("DELETE FROM login_tracking WHERE ip = ? AND service = ?", ip, service)
 	return false
 }
 
 func RecordFailedLogin(ip string, service string) {
-	// UPSERT: Если IP нет, добавляем с attempts=1. Если есть — увеличиваем счетчик.
 	_, err := database.DB.Exec(`
-		INSERT INTO login_tracking (ip, attempts, lockout_until) 
-		VALUES (?, 1, 0)
-		ON CONFLICT(ip) DO UPDATE SET attempts = attempts + 1
-	`, ip)
-	
+		INSERT INTO login_tracking (ip, service, attempts, lockout_until) 
+		VALUES (?, ?, 1, 0)
+		ON CONFLICT(ip, service) DO UPDATE SET attempts = attempts + 1
+	`, ip, service)
+
 	if err != nil {
 		logs.Log("ERROR", "Failed to update login tracking: "+err.Error())
 		return
 	}
 
-	// Проверяем, достигло ли количество попыток лимита
 	var attempts int
-	database.DB.QueryRow("SELECT attempts FROM login_tracking WHERE ip = ?", ip).Scan(&attempts)
+	database.DB.QueryRow("SELECT attempts FROM login_tracking WHERE ip = ? AND service = ?", ip, service).Scan(&attempts)
 
 	if attempts >= 5 {
-		// Блокируем на 5 минут вперед
 		lockoutTime := time.Now().Add(5 * time.Minute).Unix()
-		database.DB.Exec("UPDATE login_tracking SET lockout_until = ? WHERE ip = ?", lockoutTime, ip)
-		logs.Log("WARNING", "Brute-force protection: IP blocked for 5 minutes via "+service+" - "+ip)
+		database.DB.Exec("UPDATE login_tracking SET lockout_until = ? WHERE ip = ? AND service = ?", lockoutTime, ip, service)
+		logs.Log("WARNING", "Brute-force protection: IP blocked for 5 minutes on ["+service+"] - "+ip)
 	}
 }
 
-func ResetLoginAttempts(ip string) {
-	// При успешном входе полностью стираем историю попыток для этого IP
-	database.DB.Exec("DELETE FROM login_tracking WHERE ip = ?", ip)
+func ResetLoginAttempts(ip string, service string) {
+	database.DB.Exec("DELETE FROM login_tracking WHERE ip = ? AND service = ?", ip, service)
 }
 
 func GetClientIP(r *http.Request) string {
-	// 1. Ищем реальный IP, если сервер стоит за прокси (Nginx/Cloudflare)
 	if ip := r.Header.Get("X-Real-IP"); ip != "" {
 		return ip
 	}
 	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		// Заголовок может содержать несколько IP через запятую
 		parts := strings.Split(ip, ",")
 		return strings.TrimSpace(parts[0])
 	}
 
-	// 2. Если прокси нет, используем стандартный адрес сокета
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -88,7 +79,7 @@ func GetClientIP(r *http.Request) string {
 }
 
 // ==========================================
-// ЛОГИКА АВТОРИЗАЦИИ
+// AUTHENTICATION LOGIC
 // ==========================================
 
 func HashPassword(password string) (string, error) {
