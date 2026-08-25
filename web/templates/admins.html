@@ -1,0 +1,143 @@
+{{define "content"}}
+<h1 style="margin-bottom: 32px;">Administrators</h1>
+
+{{if .Message}}
+<div class="alert {{if .IsError}}error{{else}}info{{end}}">
+    <span class="material-symbols-rounded">{{if .IsError}}error{{else}}check_circle{{end}}</span> {{.Message}}
+</div>
+{{end}}
+
+<div class="card max-w-600" style="margin-bottom: 32px;">
+    <h3 style="margin-bottom: 24px;">Add New Administrator</h3>
+    <form method="POST" style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
+        {{.CSRFField}}
+        <input type="hidden" name="action" value="add">
+        
+        <div style="display: flex; gap: 16px; width: 100%; flex-wrap: wrap;">
+            <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 200px;">
+                <label>Admin Username</label>
+                <input type="text" name="username" required autocomplete="off">
+            </div>
+            <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 200px;">
+                <label>Password</label>
+                <input type="password" name="password" required autocomplete="new-password">
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="margin-left: auto; margin-top: 8px;">
+            <span class="material-symbols-rounded">person_add</span> Create Admin
+        </button>
+    </form>
+</div>
+
+<div class="card">
+    <table class="table">
+        <tr>
+            <th>ID</th>
+            <th>Username</th>
+            <th>Actions</th>
+        </tr>
+        {{range .Admins}}
+        <tr>
+            <td>#{{.ID}}</td>
+            <td style="font-weight: 500;">{{.Username}}</td>
+            <td style="display:flex; gap: 8px;">
+                <!-- Edit Username Button -->
+                <button type="button" title="Edit Username" class="btn btn-sm btn-warning" onclick="openAdminUserDialog('{{.ID}}', '{{.Username}}')" style="padding: 6px 12px; border-radius: 8px;">
+                    <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">edit</span>
+                </button>
+
+                <!-- Change Password Button -->
+                <button type="button" title="Change Password" class="btn btn-sm btn-primary" onclick="openAdminPwdDialog('{{.ID}}', '{{.Username}}')" style="padding: 6px 12px; border-radius: 8px;">
+                    <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">key</span>
+                </button>
+
+                <!-- Delete Admin Button -->
+                <form method="POST" style="margin:0;" onsubmit="return confirm('Are you sure you want to delete administrator {{.Username}}?');">
+                    {{$.CSRFField}}
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="id" value="{{.ID}}">
+                    <button type="submit" title="Delete Administrator" class="btn btn-sm btn-danger" style="padding: 6px 12px; border-radius: 8px;">
+                        <span class="material-symbols-rounded" style="margin: 0; font-size: 18px;">delete</span>
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {{end}}
+    </table>
+</div>
+
+<!-- DIALOG: Change Password -->
+<dialog id="adminPwdDialog" class="card" style="margin: auto; max-width: 400px; width: 100%; border: none; outline: none; box-shadow: 0 8px 32px rgba(0,0,0,0.3); padding: 32px;">
+    <h3 style="margin-top: 0; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+        <span class="material-symbols-rounded" style="color: var(--md-primary);">key</span> 
+        Change Admin Password
+    </h3>
+    <p style="color: var(--md-on-surface-variant); font-size: 0.875rem; margin-bottom: 24px;">
+        Setting a new password for: <strong id="adminPwdUsername" style="color: var(--md-on-surface);"></strong>
+    </p>
+    
+    <form method="POST">
+        {{.CSRFField}}
+        <input type="hidden" name="action" value="pass">
+        <input type="hidden" name="id" id="adminPwdUserId">
+        
+        <div class="form-group">
+            <label>New Password</label>
+            <input type="password" name="password" required placeholder="••••••••" style="background: var(--md-background);" autocomplete="new-password">
+        </div>
+        
+        <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 32px;">
+            <button type="button" class="btn" style="background: var(--md-surface-variant); color: var(--md-on-surface-variant);" onclick="document.getElementById('adminPwdDialog').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Password</button>
+        </div>
+    </form>
+</dialog>
+
+<!-- DIALOG: Edit Username -->
+<dialog id="adminUserDialog" class="card" style="margin: auto; max-width: 400px; width: 100%; border: none; outline: none; box-shadow: 0 8px 32px rgba(0,0,0,0.3); padding: 32px;">
+    <h3 style="margin-top: 0; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+        <span class="material-symbols-rounded" style="color: var(--md-primary);">badge</span> 
+        Edit Admin Username
+    </h3>
+    <p style="color: var(--md-on-surface-variant); font-size: 0.875rem; margin-bottom: 24px;">
+        Change username for administrator account:
+    </p>
+    
+    <form method="POST">
+        {{.CSRFField}}
+        <input type="hidden" name="action" value="edit_username">
+        <input type="hidden" name="id" id="adminEditUserId">
+        
+        <div class="form-group">
+            <label>New Username</label>
+            <input type="text" name="new_username" id="adminEditUsernameInput" required style="background: var(--md-background);" autocomplete="off">
+        </div>
+        
+        <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 32px;">
+            <button type="button" class="btn" style="background: var(--md-surface-variant); color: var(--md-on-surface-variant);" onclick="document.getElementById('adminUserDialog').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Username</button>
+        </div>
+    </form>
+</dialog>
+
+<style>
+    dialog::backdrop {
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(2px);
+    }
+</style>
+<script>
+    function openAdminPwdDialog(id, username) {
+        document.getElementById('adminPwdUserId').value = id;
+        document.getElementById('adminPwdUsername').innerText = username;
+        document.getElementById('adminPwdDialog').showModal();
+    }
+
+    function openAdminUserDialog(id, currentUsername) {
+        document.getElementById('adminEditUserId').value = id;
+        document.getElementById('adminEditUsernameInput').value = currentUsername;
+        document.getElementById('adminUserDialog').showModal();
+    }
+</script>
+{{end}}

@@ -121,6 +121,7 @@ func StartWebServer() {
 	mux.HandleFunc("/login", loginHandler)
 	mux.HandleFunc("/logout", logoutHandler)
 	mux.HandleFunc("/settings", authMiddleware(settingsHandler))
+	mux.HandleFunc("/admins", authMiddleware(adminsHandler)) // Route for Administrator Management
 	mux.HandleFunc("/users", authMiddleware(usersHandler))
 	mux.HandleFunc("/logs", authMiddleware(logsHandler))
 	mux.HandleFunc("/api/control", authMiddleware(controlHandler))
@@ -229,7 +230,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	ip := auth.GetClientIP(r)
 
-	// Используем централизованную проверку блокировки из БД
 	if auth.IsLockedOut(ip) {
 		renderStandalone(w, r, "login", map[string]interface{}{"Error": "Too many failed attempts. Try again in 5 minutes."})
 		return
@@ -391,6 +391,131 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	renderTemplate(w, r, "settings", map[string]interface{}{"Config": config.GetConfig(), "Message": msg})
+}
+
+// AdminUser represents administrator record
+type AdminUser struct {
+	ID       int
+	Username string
+}
+
+// adminsHandler handles Administrator Management CRUD
+func adminsHandler(w http.ResponseWriter, r *http.Request) {
+	msg := ""
+	isError := false
+
+	if r.Method == "POST" {
+		action := r.FormValue("action")
+		id := r.FormValue("id")
+
+		switch action {
+		case "add":
+			u, p := r.FormValue("username"), r.FormValue("password")
+			if u == "" || p == "" {
+				msg = "Username and password cannot be empty."
+				isError = true
+			} else {
+				hash, err := auth.HashPassword(p)
+				if err != nil {
+					logs.Log("ERROR", "Password hashing failed for admin: "+err.Error())
+					msg = "Failed to process password."
+					isError = true
+				} else {
+					_, err = database.DB.Exec("INSERT INTO admin_users (username, password_hash) VALUES (?, ?)", u, hash)
+					if err != nil {
+						logs.Log("ERROR", "Failed to add administrator: "+err.Error())
+						msg = "Failed to create administrator (username might already exist)."
+						isError = true
+					} else {
+						logs.Log("INFO", "Added new administrator: "+u)
+						msg = "Administrator created successfully."
+					}
+				}
+			}
+		case "delete":
+			var count int
+			database.DB.QueryRow("SELECT COUNT(*) FROM admin_users").Scan(&count)
+			if count <= 1 {
+				logs.Log("WARNING", "Blocked attempt to delete the last administrator")
+				msg = "Cannot delete the only administrator account."
+				isError = true
+			} else {
+				var deletedUser string
+				database.DB.QueryRow("SELECT username FROM admin_users WHERE id = ?", id).Scan(&deletedUser)
+				_, err := database.DB.Exec("DELETE FROM admin_users WHERE id = ?", id)
+				if err != nil {
+					logs.Log("ERROR", "Failed to delete administrator: "+err.Error())
+					msg = "Failed to delete administrator."
+					isError = true
+				} else {
+					logs.Log("INFO", "Deleted administrator: "+deletedUser)
+					msg = "Administrator deleted successfully."
+				}
+			}
+		case "edit_username":
+			newUsername := r.FormValue("new_username")
+			if newUsername == "" {
+				msg = "Username cannot be empty."
+				isError = true
+			} else {
+				_, err := database.DB.Exec("UPDATE admin_users SET username = ? WHERE id = ?", newUsername, id)
+				if err != nil {
+					logs.Log("ERROR", "Failed to update admin username: "+err.Error())
+					msg = "Failed to update username (it might already be in use)."
+					isError = true
+				} else {
+					logs.Log("INFO", "Updated admin username to "+newUsername+" (ID: "+id+")")
+					msg = "Administrator username updated successfully."
+				}
+			}
+		case "pass":
+			newPass := r.FormValue("password")
+			if newPass == "" {
+				msg = "Password cannot be empty."
+				isError = true
+			} else {
+				hash, err := auth.HashPassword(newPass)
+				if err != nil {
+					logs.Log("ERROR", "Password hashing failed: "+err.Error())
+					msg = "Failed to process password."
+					isError = true
+				} else {
+					_, err := database.DB.Exec("UPDATE admin_users SET password_hash = ? WHERE id = ?", hash, id)
+					if err != nil {
+						logs.Log("ERROR", "Failed to update admin password: "+err.Error())
+						msg = "Failed to update password."
+						isError = true
+					} else {
+						logs.Log("INFO", "Password updated for administrator ID: "+id)
+						msg = "Administrator password updated successfully."
+					}
+				}
+			}
+		}
+	}
+
+	rows, err := database.DB.Query("SELECT id, username FROM admin_users ORDER BY id ASC")
+	if err != nil {
+		logs.Log("ERROR", "Failed to fetch administrators: "+err.Error())
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var admins []AdminUser
+	for rows.Next() {
+		var a AdminUser
+		if err := rows.Scan(&a.ID, &a.Username); err != nil {
+			continue
+		}
+		admins = append(admins, a)
+	}
+
+	renderTemplate(w, r, "admins", map[string]interface{}{
+		"Admins":  admins,
+		"Message": msg,
+		"IsError": isError,
+	})
 }
 
 type WDUser struct {
