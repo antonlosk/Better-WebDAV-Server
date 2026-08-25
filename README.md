@@ -7,6 +7,7 @@ Better WebDAV Server — это WebDAV-сервер с веб-панелью у�
 
 - **Dashboard** — сводка по состоянию сервера, порту и общей папке.
 - **Settings** — изменение пути к общей директории и портов.
+- **Administrators** — управление администраторами.
 - **Users** — управление пользователями.
 - **Logs** — просмотр, поиск, скачивание и очистка логов.
 - **Explorer** — удобный просмотр содержимого WebDAV-каталога.
@@ -20,6 +21,9 @@ Better WebDAV Server — это WebDAV-сервер с веб-панелью у�
 
 ### Settings
 ![Settings](assets/screenshots/settings.png)
+
+### Administrators
+![Administrators](assets/screenshots/administrators.png)
 
 ### Users
 ![Users](assets/screenshots/users.png)
