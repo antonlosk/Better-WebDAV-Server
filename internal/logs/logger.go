@@ -30,11 +30,17 @@ type RotatingFileWriter struct {
 }
 
 func parseMaxBytes(sizeStr, unitStr string) int64 {
+	unit := strings.ToUpper(strings.TrimSpace(unitStr))
+	if unit == "UNLIMITED" {
+		return 0 // 0 means unlimited size / auto-rotation disabled
+	}
+
 	size, err := strconv.ParseInt(sizeStr, 10, 64)
 	if err != nil || size <= 0 {
-		size = 64
+		return 64 * 1024 * 1024
 	}
-	switch strings.ToUpper(unitStr) {
+
+	switch unit {
 	case "KB":
 		return size * 1024
 	case "GB":
@@ -64,7 +70,7 @@ func NewRotatingFileWriter(filename string, maxBytes int64) (*RotatingFileWriter
 		file:     f,
 	}
 
-	if size >= maxBytes {
+	if maxBytes > 0 && size >= maxBytes {
 		_ = rw.rotate()
 	}
 
@@ -76,7 +82,8 @@ func (w *RotatingFileWriter) Write(p []byte) (n int, err error) {
 	defer w.mu.Unlock()
 
 	writeLen := int64(len(p))
-	if w.size+writeLen > w.maxBytes && w.size > 0 {
+	// Rotate only if maxBytes > 0 (rotation is enabled)
+	if w.maxBytes > 0 && w.size > 0 && w.size+writeLen > w.maxBytes {
 		_ = w.rotate()
 	}
 
@@ -120,7 +127,7 @@ func (w *RotatingFileWriter) SetLimit(maxBytes int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.maxBytes = maxBytes
-	if w.size >= w.maxBytes && w.size > 0 {
+	if w.maxBytes > 0 && w.size >= w.maxBytes && w.size > 0 {
 		_ = w.rotate()
 	}
 }

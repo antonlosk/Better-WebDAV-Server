@@ -392,11 +392,18 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		newLogMaxSize := strings.TrimSpace(r.FormValue("log_max_size"))
 		newLogMaxUnit := strings.ToUpper(strings.TrimSpace(r.FormValue("log_max_unit")))
 
-		if newLogMaxSize == "" {
-			newLogMaxSize = "64"
-		}
-		if newLogMaxUnit != "KB" && newLogMaxUnit != "MB" && newLogMaxUnit != "GB" {
+		if newLogMaxUnit != "KB" && newLogMaxUnit != "MB" && newLogMaxUnit != "GB" && newLogMaxUnit != "UNLIMITED" {
 			newLogMaxUnit = "MB"
+		}
+
+		if newLogMaxUnit == "UNLIMITED" {
+			if newLogMaxSize == "" {
+				newLogMaxSize = "0"
+			}
+		} else {
+			if newLogMaxSize == "" {
+				newLogMaxSize = "64"
+			}
 		}
 
 		davPortInt, errDav := strconv.Atoi(newDavPort)
@@ -405,7 +412,7 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 
 		if errDav != nil || davPortInt < 1 || davPortInt > 65535 || errUI != nil || uiPortInt < 1 || uiPortInt > 65535 {
 			msg = "Error: Ports must be valid numbers between 1 and 65535!"
-		} else if errSize != nil || maxSizeInt <= 0 {
+		} else if newLogMaxUnit != "UNLIMITED" && (errSize != nil || maxSizeInt <= 0) {
 			msg = "Error: Max log size must be a positive integer!"
 		} else if newDavPort == newUIPort {
 			msg = "Error: WebDAV and Web UI ports must be different!"
@@ -459,7 +466,6 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 					logs.Log("ERROR", "Failed to save configuration: "+err.Error())
 					msg = "Error: Failed to save settings to database!"
 				} else {
-					// Instantly update active file rotator limit
 					logs.UpdateRotationLimit(newLogMaxSize, newLogMaxUnit)
 
 					if davChanged {
