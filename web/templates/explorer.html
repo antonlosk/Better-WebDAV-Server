@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="/static/web/static/css/style.css">
     
     <style>
-        /* Стили для зоны перетаскивания (Drag & Drop) */
+        /* Drag & Drop full-screen overlay */
         #drop-zone {
             display: none;
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
@@ -22,7 +22,7 @@
         #drop-zone * { pointer-events: none; }
         #drop-zone .material-symbols-rounded { font-size: 80px; margin-bottom: 24px; }
 
-        /* Прогресс-бар загрузки */
+        /* Upload progress card */
         #upload-progress {
             display: none; position: fixed; bottom: 24px; right: 24px;
             width: 340px; z-index: 1000; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
@@ -30,7 +30,7 @@
         .progress-bar-bg { width: 100%; background: var(--md-surface-container-high); border-radius: 100px; height: 8px; margin-top: 16px; overflow: hidden; }
         .progress-bar-fill { height: 100%; background: var(--md-primary); width: 0%; transition: width 0.2s linear; }
         
-        /* Кнопки действий (Удалить / Переименовать / Отменить) */
+        /* Action buttons */
         .btn-icon { background: none; border: none; cursor: pointer; padding: 8px; border-radius: 50%; display: inline-flex; transition: 0.2s; align-items: center; justify-content: center;}
         .btn-icon:hover { background: var(--md-surface-container-high); }
         .btn-icon.danger:hover { background: var(--md-error-container); }
@@ -40,18 +40,18 @@
 </head>
 <body style="display: block;">
 
-    <!-- ОВЕРЛЕЙ DRAG & DROP -->
+    <!-- DRAG & DROP OVERLAY -->
     {{if .CanUpload}}
     <div id="drop-zone">
         <span class="material-symbols-rounded">cloud_upload</span>
-        Drop files here to upload instantly
+        Drop files or folders here to upload
     </div>
 
-    <!-- КАРТОЧКА ПРОГРЕССА ЗАГРУЗКИ С КНОПКОЙ ОТМЕНЫ -->
+    <!-- UPLOAD PROGRESS CARD WITH CANCEL BUTTON -->
     <div id="upload-progress" class="card" style="padding: 20px; border-radius: 16px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <h3 style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
-                <span class="material-symbols-rounded" style="color: var(--md-primary);">upload</span> Uploading...
+                <span class="material-symbols-rounded" style="color: var(--md-primary);">upload</span> Processing...
             </h3>
             <button onclick="cancelUpload()" class="btn-icon danger" title="Cancel Upload" style="padding: 4px;">
                 <span class="material-symbols-rounded" style="color: var(--md-on-surface-variant); margin: 0; font-size: 20px;">close</span>
@@ -134,6 +134,7 @@
         </div>
     </div>
 
+    <!-- JS SCRIPTS -->
     <script>
         {{if .CanDelete}}
         function deleteItem(url, name) {
@@ -197,7 +198,7 @@
         }
 
         // ==========================================
-        // ЛОГИКА ЗАГРУЗКИ И ОТМЕНЫ (DRAG & DROP)
+        // RECURSIVE DRAG & DROP FOLDER UPLOAD LOGIC
         // ==========================================
         const dropZone = document.getElementById('drop-zone');
         const uploadProgress = document.getElementById('upload-progress');
@@ -205,17 +206,15 @@
         const progressText = document.getElementById('progress-text');
         
         let dragCounter = 0;
-        let currentXhr = null;         // Хранит текущий запрос загрузки
-        let isUploadCancelled = false; // Флаг отмены очереди загрузок
+        let currentXhr = null;
+        let isUploadCancelled = false;
 
-        // НОВАЯ ФУНКЦИЯ ОТМЕНЫ ЗАГРУЗКИ
         function cancelUpload() {
             isUploadCancelled = true;
             if (currentXhr) {
-                currentXhr.abort(); // Мгновенно прерывает соединение с сервером
+                currentXhr.abort();
             }
             uploadProgress.style.display = 'none';
-            // Перезагружаем страницу, чтобы пользователь увидел файлы, которые успели загрузиться до отмены
             location.reload(); 
         }
 
@@ -233,23 +232,126 @@
 
         document.addEventListener('dragover', (e) => { e.preventDefault(); });
 
-        document.addEventListener('drop', (e) => {
+        document.addEventListener('drop', async (e) => {
             e.preventDefault();
             dragCounter = 0;
             dropZone.style.display = 'none';
-            
-            const files = e.dataTransfer.files;
-            if (files.length === 0) return;
-            uploadFiles(files);
+
+            const items = e.dataTransfer.items;
+            if (!items || items.length === 0) {
+                // Fallback for browsers with standard flat file list
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    const fallbackTasks = Array.from(files).map(f => ({ type: 'file', file: f, path: f.name }));
+                    processUploadTasks(fallbackTasks);
+                }
+                return;
+            }
+
+            uploadProgress.style.display = 'block';
+            progressText.innerText = 'Scanning dropped items...';
+            progressBar.style.width = '0%';
+
+            let allTasks = [];
+            for (let i = 0; i < items.length; i++) {
+                const entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+                if (entry) {
+                    const scanned = await scanEntry(entry);
+                    if (Array.isArray(scanned)) {
+                        allTasks.push(...scanned);
+                    } else if (scanned) {
+                        allTasks.push(scanned);
+                    }
+                } else {
+                    const file = items[i].getAsFile();
+                    if (file) {
+                        allTasks.push({ type: 'file', file: file, path: file.name });
+                    }
+                }
+            }
+
+            if (allTasks.length === 0) {
+                uploadProgress.style.display = 'none';
+                return;
+            }
+
+            processUploadTasks(allTasks);
         });
 
-        function uploadFiles(files) {
-            uploadProgress.style.display = 'block';
-            let currentFileIndex = 0;
-            isUploadCancelled = false; // Сбрасываем флаг при новой загрузке
+        // Recursively traverses directories and extracts all files and subdirectories
+        async function scanEntry(entry, path = "") {
+            if (entry.isFile) {
+                return new Promise((resolve) => {
+                    entry.file((file) => {
+                        resolve({
+                            type: 'file',
+                            file: file,
+                            path: path + file.name
+                        });
+                    });
+                });
+            } else if (entry.isDirectory) {
+                const dirPath = path + entry.name + "/";
+                const dirReader = entry.createReader();
+                let entries = [];
 
-            function uploadNext() {
-                // Если загрузка отменена пользователем, прерываем цикл очереди
+                // Chrome readEntries returns maximum 100 entries per batch. Loop until empty.
+                const readAllEntries = async () => {
+                    const batch = await new Promise((resolve) => dirReader.readEntries(resolve));
+                    if (batch.length > 0) {
+                        entries.push(...batch);
+                        return readAllEntries();
+                    }
+                };
+                await readAllEntries();
+
+                let results = [{ type: 'dir', path: dirPath }];
+                for (const child of entries) {
+                    const childResults = await scanEntry(child, dirPath);
+                    if (Array.isArray(childResults)) {
+                        results.push(...childResults);
+                    } else if (childResults) {
+                        results.push(childResults);
+                    }
+                }
+                return results;
+            }
+        }
+
+        // Builds URL with properly encoded path components
+        function buildTargetUrl(relPath) {
+            let basePath = window.location.pathname;
+            if (!basePath.endsWith('/')) basePath += '/';
+            const parts = relPath.split('/').map(p => encodeURIComponent(p));
+            return basePath + parts.join('/');
+        }
+
+        async function processUploadTasks(tasks) {
+            uploadProgress.style.display = 'block';
+            isUploadCancelled = false;
+
+            // Sort directories by depth (shallowest first) to ensure parents are created before subfolders
+            const dirs = tasks.filter(t => t.type === 'dir').sort((a, b) => a.path.length - b.path.length);
+            const files = tasks.filter(t => t.type === 'file');
+
+            // 1. Create all directory paths with MKCOL
+            for (let i = 0; i < dirs.length; i++) {
+                if (isUploadCancelled) return;
+                progressText.innerText = `Creating directory: ${dirs[i].path}`;
+                progressBar.style.width = '0%';
+
+                const dirUrl = buildTargetUrl(dirs[i].path);
+                try {
+                    await fetch(dirUrl, { method: 'MKCOL' });
+                    // Ignore 405 (already exists) or success codes
+                } catch (e) {
+                    console.error("Directory creation error:", e);
+                }
+            }
+
+            // 2. Upload all files sequentially with XHR for accurate progress reporting
+            let currentFileIndex = 0;
+            function uploadNextFile() {
                 if (isUploadCancelled) return;
 
                 if (currentFileIndex >= files.length) {
@@ -257,53 +359,53 @@
                     return;
                 }
 
-                const file = files[currentFileIndex];
-                progressText.innerText = `Uploading: ${file.name} (${currentFileIndex + 1}/${files.length})`;
+                const task = files[currentFileIndex];
+                progressText.innerText = `Uploading (${currentFileIndex + 1}/${files.length}): ${task.path}`;
                 progressBar.style.width = '0%';
 
                 currentXhr = new XMLHttpRequest();
-                
-                let path = window.location.pathname;
-                if (!path.endsWith('/')) path += '/';
-                const uploadUrl = path + encodeURIComponent(file.name);
-                
+                const uploadUrl = buildTargetUrl(task.path);
+
                 currentXhr.open('PUT', uploadUrl, true);
-                
+
                 currentXhr.upload.onprogress = (e) => {
                     if (e.lengthComputable && !isUploadCancelled) {
                         const percent = (e.loaded / e.total) * 100;
                         progressBar.style.width = percent + '%';
                     }
                 };
-                
+
                 currentXhr.onload = () => {
                     if (isUploadCancelled) return;
                     if (currentXhr.status >= 200 && currentXhr.status < 300) {
                         currentFileIndex++;
-                        uploadNext();
+                        uploadNextFile();
                     } else {
-                        alert(`Upload failed: ${file.name}\nStatus: ${currentXhr.status} Forbidden/Unauthorized`);
+                        alert(`Upload failed: ${task.path}\nStatus: ${currentXhr.status}`);
                         currentFileIndex++;
-                        uploadNext();
+                        uploadNextFile();
                     }
                 };
 
-                // Обработчик события abort (отмена)
                 currentXhr.onabort = () => {
                     console.log('Upload aborted by user.');
                 };
-                
+
                 currentXhr.onerror = () => {
                     if (isUploadCancelled) return;
-                    alert('Network error while uploading: ' + file.name);
+                    alert('Network error while uploading: ' + task.path);
                     currentFileIndex++;
-                    uploadNext();
+                    uploadNextFile();
                 };
-                
-                currentXhr.send(file);
+
+                currentXhr.send(task.file);
             }
 
-            uploadNext();
+            if (files.length > 0) {
+                uploadNextFile();
+            } else {
+                location.reload();
+            }
         }
         {{end}}
     </script>
