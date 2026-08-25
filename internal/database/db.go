@@ -41,7 +41,8 @@ func InitDB() {
 		webdav_port TEXT,
 		web_ui_port TEXT,
 		shared_path TEXT,
-		log_retention TEXT DEFAULT '1_year'
+		log_max_size TEXT DEFAULT '64',
+		log_max_unit TEXT DEFAULT 'MB'
 	);
 	CREATE TABLE IF NOT EXISTS login_tracking (
 		ip TEXT,
@@ -58,7 +59,10 @@ func InitDB() {
 
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_upload INTEGER DEFAULT 1")
 	DB.Exec("ALTER TABLE webdav_users ADD COLUMN can_delete INTEGER DEFAULT 1")
-	DB.Exec("ALTER TABLE settings ADD COLUMN log_retention TEXT DEFAULT '1_year'")
+
+	// Migrate settings table to size-based rotation schema
+	DB.Exec("ALTER TABLE settings ADD COLUMN log_max_size TEXT DEFAULT '64'")
+	DB.Exec("ALTER TABLE settings ADD COLUMN log_max_unit TEXT DEFAULT 'MB'")
 
 	// Migrate login_tracking schema if updating from single-column primary key
 	var hasServiceCol int

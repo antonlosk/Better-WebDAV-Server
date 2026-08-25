@@ -6,25 +6,37 @@ import (
 )
 
 type Settings struct {
-	WebDAVPort   string
-	WebUIPort    string
-	SharedPath   string
-	LogRetention string
+	WebDAVPort string
+	WebUIPort  string
+	SharedPath string
+	LogMaxSize string
+	LogMaxUnit string
 }
 
 var currentSettings Settings
 
 func InitConfig() {
-	err := database.DB.QueryRow("SELECT webdav_port, web_ui_port, shared_path, log_retention FROM settings WHERE id = 1").
-		Scan(&currentSettings.WebDAVPort, &currentSettings.WebUIPort, &currentSettings.SharedPath, &currentSettings.LogRetention)
+	err := database.DB.QueryRow("SELECT webdav_port, web_ui_port, shared_path, log_max_size, log_max_unit FROM settings WHERE id = 1").
+		Scan(&currentSettings.WebDAVPort, &currentSettings.WebUIPort, &currentSettings.SharedPath, &currentSettings.LogMaxSize, &currentSettings.LogMaxUnit)
 
 	if err == sql.ErrNoRows {
-		// По умолчанию теперь 1 год
-		currentSettings = Settings{WebDAVPort: "80", WebUIPort: "8080", SharedPath: "C:/", LogRetention: "1_year"}
-		database.DB.Exec("INSERT INTO settings (webdav_port, web_ui_port, shared_path, log_retention) VALUES (?, ?, ?, ?)",
-			currentSettings.WebDAVPort, currentSettings.WebUIPort, currentSettings.SharedPath, currentSettings.LogRetention)
+		currentSettings = Settings{
+			WebDAVPort: "80",
+			WebUIPort:  "8080",
+			SharedPath: "C:/",
+			LogMaxSize: "64",
+			LogMaxUnit: "MB",
+		}
+		database.DB.Exec("INSERT INTO settings (webdav_port, web_ui_port, shared_path, log_max_size, log_max_unit) VALUES (?, ?, ?, ?, ?)",
+			currentSettings.WebDAVPort, currentSettings.WebUIPort, currentSettings.SharedPath, currentSettings.LogMaxSize, currentSettings.LogMaxUnit)
 	} else if err != nil {
-		currentSettings = Settings{WebDAVPort: "80", WebUIPort: "8080", SharedPath: "C:/", LogRetention: "1_year"}
+		currentSettings = Settings{
+			WebDAVPort: "80",
+			WebUIPort:  "8080",
+			SharedPath: "C:/",
+			LogMaxSize: "64",
+			LogMaxUnit: "MB",
+		}
 	}
 }
 
@@ -33,8 +45,8 @@ func GetConfig() Settings {
 }
 
 func SaveConfig(s Settings) error {
-	_, err := database.DB.Exec("UPDATE settings SET webdav_port=?, web_ui_port=?, shared_path=?, log_retention=? WHERE id=1",
-		s.WebDAVPort, s.WebUIPort, s.SharedPath, s.LogRetention)
+	_, err := database.DB.Exec("UPDATE settings SET webdav_port=?, web_ui_port=?, shared_path=?, log_max_size=?, log_max_unit=? WHERE id=1",
+		s.WebDAVPort, s.WebUIPort, s.SharedPath, s.LogMaxSize, s.LogMaxUnit)
 	if err == nil {
 		currentSettings = s
 	}

@@ -2,11 +2,12 @@ package logs
 
 import (
 	"betterwebdav/internal/config"
-	"bufio"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,51 +20,184 @@ type LogEntry struct {
 	CreatedAt string
 }
 
+// RotatingFileWriter manages size-based file rotation without whole-file rewrites
+type RotatingFileWriter struct {
+	mu       sync.Mutex
+	filename string
+	maxBytes int64
+	size     int64
+	file     *os.File
+}
+
+func parseMaxBytes(sizeStr, unitStr string) int64 {
+	size, err := strconv.ParseInt(sizeStr, 10, 64)
+	if err != nil || size <= 0 {
+		size = 64
+	}
+	switch strings.ToUpper(unitStr) {
+	case "KB":
+		return size * 1024
+	case "GB":
+		return size * 1024 * 1024 * 1024
+	case "MB":
+		fallthrough
+	default:
+		return size * 1024 * 1024
+	}
+}
+
+func NewRotatingFileWriter(filename string, maxBytes int64) (*RotatingFileWriter, error) {
+	var size int64
+	if fi, err := os.Stat(filename); err == nil {
+		size = fi.Size()
+	}
+
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return nil, err
+	}
+
+	rw := &RotatingFileWriter{
+		filename: filename,
+		maxBytes: maxBytes,
+		size:     size,
+		file:     f,
+	}
+
+	if size >= maxBytes {
+		_ = rw.rotate()
+	}
+
+	return rw, nil
+}
+
+func (w *RotatingFileWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	writeLen := int64(len(p))
+	if w.size+writeLen > w.maxBytes && w.size > 0 {
+		_ = w.rotate()
+	}
+
+	if w.file == nil {
+		f, err := os.OpenFile(w.filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			return 0, err
+		}
+		w.file = f
+	}
+
+	n, err = w.file.Write(p)
+	w.size += int64(n)
+	return n, err
+}
+
+func (w *RotatingFileWriter) rotate() error {
+	if w.file != nil {
+		_ = w.file.Close()
+		w.file = nil
+	}
+
+	timestamp := time.Now().Format("2006-01-02T15-04-05")
+	dir := filepath.Dir(w.filename)
+	ext := filepath.Ext(w.filename)
+	base := strings.TrimSuffix(filepath.Base(w.filename), ext)
+	rotatedName := filepath.Join(dir, fmt.Sprintf("%s-%s%s", base, timestamp, ext))
+
+	_ = os.Rename(w.filename, rotatedName)
+
+	f, err := os.OpenFile(w.filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	w.file = f
+	w.size = 0
+	return nil
+}
+
+func (w *RotatingFileWriter) SetLimit(maxBytes int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.maxBytes = maxBytes
+	if w.size >= w.maxBytes && w.size > 0 {
+		_ = w.rotate()
+	}
+}
+
+func (w *RotatingFileWriter) Truncate() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.file != nil {
+		_ = w.file.Close()
+		w.file = nil
+	}
+
+	if err := os.WriteFile(w.filename, []byte(""), 0666); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(w.filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	w.file = f
+	w.size = 0
+	return nil
+}
+
+func (w *RotatingFileWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file != nil {
+		return w.file.Close()
+	}
+	return nil
+}
+
 var (
-	logFile *os.File
+	rotator *RotatingFileWriter
 	logMu   sync.Mutex
 )
 
 func InitLogger() {
-	os.MkdirAll("logs", 0755)
+	_ = os.MkdirAll("logs", 0755)
 
-	var err error
+	cfg := config.GetConfig()
+	maxBytes := parseMaxBytes(cfg.LogMaxSize, cfg.LogMaxUnit)
+
 	logPath := filepath.Join("logs", "server.log")
-	logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	var err error
+	rotator, err = NewRotatingFileWriter(logPath, maxBytes)
 	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
+		log.Fatalf("Failed to initialize rotating logger: %v", err)
 	}
 
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	multiWriter := io.MultiWriter(os.Stdout, rotator)
 	log.SetOutput(multiWriter)
 	log.SetFlags(log.Ldate | log.Ltime)
 
 	Log("INFO", "Application started")
+}
 
-	go func() {
-		CleanOldLogs()
-		for {
-			time.Sleep(1 * time.Hour)
-			CleanOldLogs()
-		}
-	}()
+func UpdateRotationLimit(sizeStr, unitStr string) {
+	if rotator != nil {
+		maxBytes := parseMaxBytes(sizeStr, unitStr)
+		rotator.SetLimit(maxBytes)
+	}
 }
 
 func CloseLogger() {
-	logMu.Lock()
-	defer logMu.Unlock()
-	if logFile != nil {
-		logFile.Close()
+	if rotator != nil {
+		_ = rotator.Close()
 	}
 }
 
 func Log(level, message string) {
-	logMu.Lock()
-	defer logMu.Unlock()
 	log.Printf("[%s] %s\n", level, message)
 }
 
-// Вспомогательная функция для эффективного чтения N последних строк с конца файла
 func getTailLines(file *os.File, limit int) []string {
 	var lines []string
 	stat, err := file.Stat()
@@ -77,7 +211,7 @@ func getTailLines(file *os.File, limit int) []string {
 	}
 
 	var cursor int64 = filesize
-	var bufSize int64 = 32768 // Читаем блоками по 32 KB (минимальное потребление ОЗУ)
+	var bufSize int64 = 32768
 	var leftover string
 
 	for cursor > 0 && len(lines) < limit {
@@ -87,16 +221,13 @@ func getTailLines(file *os.File, limit int) []string {
 		cursor -= bufSize
 
 		buf := make([]byte, bufSize)
-		file.ReadAt(buf, cursor)
+		_, _ = file.ReadAt(buf, cursor)
 
-		// Склеиваем с куском от предыдущего блока
 		chunk := string(buf) + leftover
 		parts := strings.Split(chunk, "\n")
 
-		// Самая верхняя часть строки может быть неполной
 		leftover = parts[0]
 
-		// Идем с конца в начало и собираем строки
 		for i := len(parts) - 1; i > 0; i-- {
 			line := strings.TrimSpace(parts[i])
 			if line != "" {
@@ -108,7 +239,6 @@ func getTailLines(file *os.File, limit int) []string {
 		}
 	}
 
-	// Забираем самый первый огрызок, если дошли до начала файла
 	if cursor == 0 && leftover != "" && len(lines) < limit {
 		line := strings.TrimSpace(leftover)
 		if line != "" {
@@ -130,13 +260,11 @@ func GetLogs(limit int) []LogEntry {
 	}
 	defer file.Close()
 
-	// Читаем файл с конца блоками (максимально экономит память)
 	lines := getTailLines(file, limit)
 
 	var entries []LogEntry
 	idCounter := 1
 
-	// Строки в `lines` уже отсортированы от новых к старым благодаря getTailLines
 	for _, line := range lines {
 		if len(line) < 20 {
 			continue
@@ -167,92 +295,7 @@ func GetLogs(limit int) []LogEntry {
 }
 
 func ClearLogs() {
-	logMu.Lock()
-	defer logMu.Unlock()
-
-	logPath := filepath.Join("logs", "server.log")
-
-	if logFile != nil {
-		logFile.Close()
-	}
-
-	os.WriteFile(logPath, []byte(""), 0666)
-
-	var err error
-	logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err == nil {
-		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
-	}
-}
-
-func CleanOldLogs() {
-	cfg := config.GetConfig()
-
-	if cfg.LogRetention == "never" {
-		return
-	}
-
-	var retention time.Duration
-
-	switch cfg.LogRetention {
-	case "1_hour": retention = 1 * time.Hour
-	case "24_hours": retention = 24 * time.Hour
-	case "7_days": retention = 7 * 24 * time.Hour
-	case "1_month": retention = 30 * 24 * time.Hour
-	case "3_months": retention = 90 * 24 * time.Hour
-	case "6_months": retention = 180 * 24 * time.Hour
-	case "9_months": retention = 270 * 24 * time.Hour
-	case "1_year": retention = 365 * 24 * time.Hour
-	default: retention = 365 * 24 * time.Hour
-	}
-
-	cutoff := time.Now().Add(-retention)
-	layout := "2006/01/02 15:04:05"
-
-	logMu.Lock()
-	defer logMu.Unlock()
-
-	logPath := filepath.Join("logs", "server.log")
-	tmpPath := filepath.Join("logs", "server.tmp")
-
-	file, err := os.Open(logPath)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	// Открываем временный файл для записи
-	tmpFile, err := os.Create(tmpPath)
-	if err != nil {
-		return
-	}
-
-	// Потоковое чтение и запись (O(1) оперативной памяти)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if len(line) >= 19 {
-			if t, err := time.Parse(layout, line[:19]); err == nil {
-				if t.Before(cutoff) {
-					continue // Пропускаем старые записи
-				}
-			}
-		}
-		// Записываем актуальную строку напрямую на диск
-		tmpFile.WriteString(line + "\n")
-	}
-	tmpFile.Close()
-	file.Close()
-
-	if logFile != nil {
-		logFile.Close()
-	}
-
-	// Подменяем старый файл новым
-	os.Rename(tmpPath, logPath)
-
-	logFile, _ = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if logFile != nil {
-		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	if rotator != nil {
+		_ = rotator.Truncate()
 	}
 }

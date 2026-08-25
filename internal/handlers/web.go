@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -269,7 +270,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	ip := auth.GetClientIP(r)
 
-	// Isolate lockout check specifically for "admin" service
 	if auth.IsLockedOut(ip, "admin") {
 		renderStandalone(w, r, "login", map[string]interface{}{"Error": "Too many failed attempts. Try again in 5 minutes."})
 		return
@@ -389,17 +389,24 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		newPath := r.FormValue("shared_path")
 		newDavPort := r.FormValue("webdav_port")
 		newUIPort := r.FormValue("web_ui_port")
-		newLogRetention := r.FormValue("log_retention")
+		newLogMaxSize := strings.TrimSpace(r.FormValue("log_max_size"))
+		newLogMaxUnit := strings.ToUpper(strings.TrimSpace(r.FormValue("log_max_unit")))
 
-		if newLogRetention == "" {
-			newLogRetention = "1_year"
+		if newLogMaxSize == "" {
+			newLogMaxSize = "64"
+		}
+		if newLogMaxUnit != "KB" && newLogMaxUnit != "MB" && newLogMaxUnit != "GB" {
+			newLogMaxUnit = "MB"
 		}
 
 		davPortInt, errDav := strconv.Atoi(newDavPort)
 		uiPortInt, errUI := strconv.Atoi(newUIPort)
+		maxSizeInt, errSize := strconv.Atoi(newLogMaxSize)
 
 		if errDav != nil || davPortInt < 1 || davPortInt > 65535 || errUI != nil || uiPortInt < 1 || uiPortInt > 65535 {
 			msg = "Error: Ports must be valid numbers between 1 and 65535!"
+		} else if errSize != nil || maxSizeInt <= 0 {
+			msg = "Error: Max log size must be a positive integer!"
 		} else if newDavPort == newUIPort {
 			msg = "Error: WebDAV and Web UI ports must be different!"
 		} else if _, err := os.Stat(newPath); os.IsNotExist(err) {
@@ -422,36 +429,38 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 			if errListenDav != nil {
 				msg = "Error: WebDAV Port is already in use!"
 				if lUI != nil {
-					lUI.Close()
+					_ = lUI.Close()
 				}
 			} else if errListenUI != nil {
 				msg = "Error: Web UI Port is already in use!"
 				if lDav != nil {
-					lDav.Close()
+					_ = lDav.Close()
 				}
 			} else {
 				if lDav != nil {
-					lDav.Close()
+					_ = lDav.Close()
 				}
 				if lUI != nil {
-					lUI.Close()
+					_ = lUI.Close()
 				}
 
 				uiPortChanged := (newUIPort != currentCfg.WebUIPort)
 				davChanged := (newDavPort != currentCfg.WebDAVPort || newPath != currentCfg.SharedPath)
 
 				err := config.SaveConfig(config.Settings{
-					WebDAVPort:   newDavPort,
-					WebUIPort:    newUIPort,
-					SharedPath:   newPath,
-					LogRetention: newLogRetention,
+					WebDAVPort: newDavPort,
+					WebUIPort:  newUIPort,
+					SharedPath: newPath,
+					LogMaxSize: newLogMaxSize,
+					LogMaxUnit: newLogMaxUnit,
 				})
 
 				if err != nil {
 					logs.Log("ERROR", "Failed to save configuration: "+err.Error())
 					msg = "Error: Failed to save settings to database!"
 				} else {
-					go logs.CleanOldLogs()
+					// Instantly update active file rotator limit
+					logs.UpdateRotationLimit(newLogMaxSize, newLogMaxUnit)
 
 					if davChanged {
 						logs.Log("INFO", "WebDAV settings changed. Restarting WebDAV...")
@@ -565,7 +574,7 @@ func adminsHandler(w http.ResponseWriter, r *http.Request) {
 					msg = "Failed to process password."
 					isError = true
 				} else {
-					_, err = database.DB.Exec("UPDATE admin_users SET password_hash = ? WHERE id = ?", hash, id)
+					_, err := database.DB.Exec("UPDATE admin_users SET password_hash = ? WHERE id = ?", hash, id)
 					if err != nil {
 						logs.Log("ERROR", "Failed to update admin password: "+err.Error())
 						msg = "Failed to update password."
