@@ -38,18 +38,17 @@ func openBrowser(url string) error {
 }
 
 func main() {
-	os.MkdirAll("data", 0755)
-	os.MkdirAll("logs", 0755)
+	_ = os.MkdirAll("data", 0755)
+	_ = os.MkdirAll("logs", 0755)
 
 	database.InitDB()
 	config.InitConfig()
-	logs.InitLogger() // Теперь эта функция создает и открывает файл logs/server.log
+	logs.InitLogger()
 
-	// Запускаем серверы
 	webdav.StartServer()
 	handlers.StartWebServer()
 
-	// Авто-открытие браузера (только при первом запуске)
+	// Auto-open browser on first launch only
 	go func() {
 		time.Sleep(1 * time.Second)
 		if !auth.AdminExists() {
@@ -63,28 +62,25 @@ func main() {
 		}
 	}()
 
-	// ==========================================
-	// GRACEFUL SHUTDOWN (МЯГКАЯ ОСТАНОВКА)
-	// ==========================================
-
+	// Graceful shutdown signal listener
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
 	<-quit
 
-	fmt.Println("\n[SYSTEM] Received shutdown signal. Initiating graceful shutdown...")
-	logs.Log("INFO", "Graceful shutdown initiated by system signal...")
+	fmt.Println("\n[SYSTEM] Received shutdown signal. Initiating shutdown...")
+	logs.Log("INFO", "Shutdown initiated by system signal")
 
-	// 1. Останавливаем панель управления
+	// 1. Stop Web UI Server
 	handlers.StopWebServer()
 
-	// 2. Останавливаем WebDAV-сервер
+	// 2. Stop WebDAV Server
 	webdav.StopServer()
 
-	// 3. Безопасно закрываем SQLite
+	// 3. Close SQLite Database Connection
 	database.CloseDB()
 
-	// 4. Освобождаем текстовый файл логов (новое!)
+	// 4. Close Server Log File
 	logs.CloseLogger()
 
 	fmt.Println("[SYSTEM] Application exited cleanly. Goodbye!")
