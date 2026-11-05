@@ -16,6 +16,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -111,12 +113,29 @@ func getCSRFField(r *http.Request) template.HTML {
 	return template.HTML(fmt.Sprintf(`<input type="hidden" name="csrf_token" value="%s">`, html.EscapeString(token)))
 }
 
+func getAvailableDrives() []string {
+	var drives []string
+	if runtime.GOOS == "windows" {
+		for _, letter := range "CDEFGHIJKLMNOPQRSTUVWXYZAB" {
+			path := string(letter) + ":\\"
+			if _, err := os.Stat(path); err == nil {
+				drives = append(drives, string(letter)+":/")
+			}
+		}
+	}
+	if len(drives) == 0 {
+		drives = append(drives, "C:/")
+	}
+	return drives
+}
+
 func createMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/static/web/", http.StripPrefix("/static/web/", http.FileServer(http.FS(web.FS))))
 
 	mux.HandleFunc("/", authMiddleware(dashboardHandler))
 	mux.HandleFunc("/setup", setupHandler)
+	mux.HandleFunc("/setup-wizard", setupWizardHandler) // Wizard Route
 	mux.HandleFunc("/login", loginHandler)
 	mux.HandleFunc("/logout", logoutHandler)
 	mux.HandleFunc("/settings", authMiddleware(settingsHandler))
@@ -242,24 +261,164 @@ func renderStandalone(w http.ResponseWriter, r *http.Request, name string, data 
 }
 
 func setupHandler(w http.ResponseWriter, r *http.Request) {
-	if auth.AdminExists() {
+	session, _ := store.Get(r, "admin-session")
+	setupActive, _ := session.Values["setup_active"].(bool)
+
+	// If admin already exists and wizard is not active, redirect to login
+	if auth.AdminExists() && !setupActive {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+
 	if r.Method == "POST" {
 		user, pass := r.FormValue("username"), r.FormValue("password")
 		if user != "" && pass != "" {
 			if err := auth.CreateAdmin(user, pass); err != nil {
-				logs.Log("ERROR", "Failed to create admin: "+err.Error())
+				logs.Log("ERROR", "Failed to create initial admin: "+err.Error())
 				http.Error(w, "Failed to create admin user", http.StatusInternalServerError)
 				return
 			}
-			logs.Log("INFO", "Admin created successfully")
-			http.Redirect(w, r, "/login", http.StatusFound)
+
+			// Activate setup session flag
+			session.Values["setup_active"] = true
+			session.Save(r, w)
+
+			logs.Log("INFO", "Initial administrator created. Proceeding to Quick Setup Wizard...")
+			http.Redirect(w, r, "/setup-wizard", http.StatusFound)
 			return
 		}
 	}
 	renderStandalone(w, r, "setup", nil)
+}
+
+func setupWizardHandler(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "admin-session")
+	setupActive, _ := session.Values["setup_active"].(bool)
+
+	// Guard: setup-wizard can only be accessed while setup session flag is active
+	if !auth.AdminExists() {
+		http.Redirect(w, r, "/setup", http.StatusFound)
+		return
+	}
+	if !setupActive {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	if r.Method == "POST" {
+		driveLetter := r.FormValue("drive_letter")
+		pathSubfolder := strings.TrimSpace(r.FormValue("path_subfolder"))
+		newDavPort := strings.TrimSpace(r.FormValue("webdav_port"))
+		newUIPort := strings.TrimSpace(r.FormValue("web_ui_port"))
+
+		extraAdminUser := strings.TrimSpace(r.FormValue("extra_admin_user"))
+		extraAdminPass := r.FormValue("extra_admin_pass")
+
+		webdavUser := strings.TrimSpace(r.FormValue("webdav_user"))
+		webdavPass := r.FormValue("webdav_pass")
+		webdavCanUpload := r.FormValue("webdav_can_upload") == "on"
+		webdavCanDelete := r.FormValue("webdav_can_delete") == "on"
+
+		davPortInt, errDav := strconv.Atoi(newDavPort)
+		uiPortInt, errUI := strconv.Atoi(newUIPort)
+
+		if errDav != nil || davPortInt < 1 || davPortInt > 65535 || errUI != nil || uiPortInt < 1 || uiPortInt > 65535 {
+			renderStandalone(w, r, "setup_wizard", map[string]interface{}{
+				"Message": "Ports must be valid numbers between 1 and 65535.",
+				"Drives":  getAvailableDrives(),
+			})
+			return
+		}
+		if newDavPort == newUIPort {
+			renderStandalone(w, r, "setup_wizard", map[string]interface{}{
+				"Message": "WebDAV and Web UI ports must be different.",
+				"Drives":  getAvailableDrives(),
+			})
+			return
+		}
+
+		// Construct Shared Path
+		cleanSub := strings.Trim(pathSubfolder, `/\`)
+		targetPath := driveLetter
+		if cleanSub != "" {
+			targetPath = filepath.ToSlash(filepath.Join(driveLetter, cleanSub))
+		}
+
+		// Ensure directory exists
+		if err := os.MkdirAll(targetPath, 0755); err != nil {
+			logs.Log("ERROR", "Failed to create shared path: "+err.Error())
+			renderStandalone(w, r, "setup_wizard", map[string]interface{}{
+				"Message": "Failed to create target directory: " + err.Error(),
+				"Drives":  getAvailableDrives(),
+			})
+			return
+		}
+
+		currentCfg := config.GetConfig()
+
+		// Save configuration
+		_ = config.SaveConfig(config.Settings{
+			WebDAVPort: newDavPort,
+			WebUIPort:  newUIPort,
+			SharedPath: targetPath,
+			LogMaxSize: currentCfg.LogMaxSize,
+			LogMaxUnit: currentCfg.LogMaxUnit,
+		})
+
+		// Restart WebDAV server with new configuration
+		webdav.RestartServer()
+
+		// Optional: Add second administrator
+		if extraAdminUser != "" && extraAdminPass != "" {
+			hash, err := auth.HashPassword(extraAdminPass)
+			if err == nil {
+				_, err = database.DB.Exec("INSERT INTO admin_users (username, password_hash) VALUES (?, ?)", extraAdminUser, hash)
+				if err == nil {
+					logs.Log("INFO", "Wizard: Added secondary administrator: "+extraAdminUser)
+				}
+			}
+		}
+
+		// Optional: Add WebDAV user
+		if webdavUser != "" && webdavPass != "" {
+			hash, err := auth.HashPassword(webdavPass)
+			if err == nil {
+				upInt, delInt := 0, 0
+				if webdavCanUpload {
+					upInt = 1
+				}
+				if webdavCanDelete {
+					delInt = 1
+				}
+				_, err = database.DB.Exec("INSERT INTO webdav_users (username, password_hash, can_upload, can_delete) VALUES (?, ?, ?, ?)", webdavUser, hash, upInt, delInt)
+				if err == nil {
+					logs.Log("INFO", "Wizard: Added WebDAV user: "+webdavUser)
+				}
+			}
+		}
+
+		// Finish setup wizard: clear setup session flag
+		session.Values["setup_active"] = false
+		session.Save(r, w)
+		logs.Log("INFO", "Quick Server Setup completed successfully.")
+
+		// Handle UI port change if needed
+		if newUIPort != currentCfg.WebUIPort {
+			go func() {
+				time.Sleep(500 * time.Millisecond)
+				RestartWebServer()
+			}()
+			http.Redirect(w, r, fmt.Sprintf("http://localhost:%s/login", newUIPort), http.StatusFound)
+			return
+		}
+
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	renderStandalone(w, r, "setup_wizard", map[string]interface{}{
+		"Drives": getAvailableDrives(),
+	})
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {

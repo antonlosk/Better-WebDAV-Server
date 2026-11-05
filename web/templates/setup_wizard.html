@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick Server Setup</title>
+    <!-- MD3 Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/web/static/css/style.css">
+    
+    <style>
+        .stepper-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 32px;
+            position: relative;
+        }
+        .step-indicator {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.8rem;
+            color: var(--md-on-surface-variant);
+            font-weight: 500;
+            z-index: 1;
+        }
+        .step-circle {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--md-surface-container-high);
+            color: var(--md-on-surface-variant);
+            font-weight: 700;
+            transition: all 0.2s ease;
+        }
+        .step-indicator.active .step-circle {
+            background: var(--md-primary);
+            color: var(--md-on-primary);
+        }
+        .step-indicator.active {
+            color: var(--md-primary);
+        }
+        .wizard-step {
+            display: none;
+        }
+        .wizard-step.active {
+            display: block;
+        }
+        .path-preview {
+            margin-top: 8px;
+            padding: 10px 14px;
+            background: var(--md-surface-container-high);
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            color: var(--md-primary);
+        }
+    </style>
+</head>
+<body class="center-body">
+    <div class="card auth-card" style="max-width: 580px; padding: 36px;">
+        
+        <div style="text-align: center; margin-bottom: 24px;">
+            <span class="material-symbols-rounded" style="font-size: 40px; color: var(--md-primary);">tune</span>
+            <h2 style="margin: 8px 0 4px;">Quick Server Setup</h2>
+            <p style="color: var(--md-on-surface-variant); font-size: 0.875rem; margin: 0;">Configure essential parameters before first login.</p>
+        </div>
+
+        {{if .Message}}
+        <div class="alert error" style="margin-bottom: 24px;">
+            <span class="material-symbols-rounded">error</span> {{.Message}}
+        </div>
+        {{end}}
+
+        <!-- STEPPER INDICATORS -->
+        <div class="stepper-header">
+            <div class="step-indicator active" id="ind-1">
+                <div class="step-circle">1</div>
+                <span>Storage & Ports</span>
+            </div>
+            <div class="step-indicator" id="ind-2">
+                <div class="step-circle">2</div>
+                <span>Admins</span>
+            </div>
+            <div class="step-indicator" id="ind-3">
+                <div class="step-circle">3</div>
+                <span>WebDAV User</span>
+            </div>
+        </div>
+
+        <form method="POST" id="wizardForm">
+            {{.CSRFField}}
+
+            <!-- ================= STEP 1: STORAGE & PORTS ================= -->
+            <div class="wizard-step active" id="step-1">
+                <h3 style="margin-bottom: 16px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                    <span class="material-symbols-rounded" style="color: var(--md-primary);">folder_shared</span>
+                    Step 1: Storage Path & Ports
+                </h3>
+
+                <div class="form-group">
+                    <label>Shared Path (Drive Letter & Folder)</label>
+                    <div style="display: flex; gap: 12px;">
+                        <select name="drive_letter" id="driveLetterSelect" onchange="updatePathPreview()" style="width: 120px; padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px; font-size: 1rem; color: var(--md-on-surface); outline: none; cursor: pointer;">
+                            {{range .Drives}}
+                            <option value="{{.}}" {{if eq . "C:/"}}selected{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                        <input type="text" name="path_subfolder" id="subfolderInput" placeholder="Folder name (optional, e.g. Shared)" oninput="updatePathPreview()" style="flex: 1; padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px; font-size: 1rem; color: var(--md-on-surface); outline: none;">
+                    </div>
+                    <div class="path-preview" id="pathPreview">Target Path: C:/</div>
+                </div>
+
+                <div style="display: flex; gap: 16px; margin-top: 20px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>WebDAV Port</label>
+                        <input type="number" name="webdav_port" id="webdavPortInput" value="80" required min="1" max="65535" style="padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px;">
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label>Web Interface Port</label>
+                        <input type="number" name="web_ui_port" id="webUIPortInput" value="8080" required min="1" max="65535" style="padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px;">
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 28px;">
+                    <button type="button" class="btn btn-primary" onclick="validateStep1AndNext()">
+                        Next: Administrators <span class="material-symbols-rounded" style="margin-left: 6px; margin-right: 0;">arrow_forward</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ================= STEP 2: ADDITIONAL ADMINS ================= -->
+            <div class="wizard-step" id="step-2">
+                <h3 style="margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                    <span class="material-symbols-rounded" style="color: var(--md-primary);">supervisor_account</span>
+                    Step 2: Additional Administrator (Optional)
+                </h3>
+                <p style="color: var(--md-on-surface-variant); font-size: 0.85rem; margin-bottom: 20px;">
+                    Primary admin account is already created. You can register an additional admin or skip this step.
+                </p>
+
+                <div class="form-group">
+                    <label>Additional Admin Username</label>
+                    <input type="text" name="extra_admin_user" id="extraAdminUserInput" placeholder="Leave empty to skip" autocomplete="off" style="padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px;">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" name="extra_admin_pass" id="extraAdminPassInput" placeholder="Leave empty to skip" autocomplete="new-password" style="padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px;">
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 28px;">
+                    <button type="button" class="btn" style="background: var(--md-surface-container-high); color: var(--md-on-surface);" onclick="goToStep(1)">
+                        <span class="material-symbols-rounded">arrow_back</span> Back
+                    </button>
+                    <div style="display: flex; gap: 12px;">
+                        <button type="button" class="btn" style="background: var(--md-surface-container-high); color: var(--md-on-surface);" onclick="skipStep2()">
+                            Skip Step
+                        </button>
+                        <button type="button" class="btn btn-primary" onclick="validateStep2AndNext()">
+                            Next: WebDAV User <span class="material-symbols-rounded" style="margin-left: 6px; margin-right: 0;">arrow_forward</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= STEP 3: WEBDAV USER ================= -->
+            <div class="wizard-step" id="step-3">
+                <h3 style="margin-bottom: 8px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                    <span class="material-symbols-rounded" style="color: var(--md-primary);">person</span>
+                    Step 3: WebDAV User (Optional)
+                </h3>
+                <p style="color: var(--md-on-surface-variant); font-size: 0.85rem; margin-bottom: 20px;">
+                    Create a user account to connect to files via WebDAV clients or web browser. You can skip this step and add users later.
+                </p>
+
+                <div class="form-group">
+                    <label>WebDAV Username</label>
+                    <input type="text" name="webdav_user" id="webdavUserInput" placeholder="Leave empty to skip" autocomplete="off" style="padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px;">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" name="webdav_pass" id="webdavPassInput" placeholder="Leave empty to skip" autocomplete="new-password" style="padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px;">
+                </div>
+
+                <div style="display: flex; gap: 24px; margin-top: 12px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--md-on-surface-variant); font-weight: 500;">
+                        <input type="checkbox" name="webdav_can_upload" checked style="width: 18px; height: 18px; accent-color: var(--md-primary);">
+                        Allow Upload & Modify
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--md-on-surface-variant); font-weight: 500;">
+                        <input type="checkbox" name="webdav_can_delete" checked style="width: 18px; height: 18px; accent-color: var(--md-primary);">
+                        Allow Deletion
+                    </label>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 32px;">
+                    <button type="button" class="btn" style="background: var(--md-surface-container-high); color: var(--md-on-surface);" onclick="goToStep(2)">
+                        <span class="material-symbols-rounded">arrow_back</span> Back
+                    </button>
+                    <div style="display: flex; gap: 12px;">
+                        <button type="button" class="btn" style="background: var(--md-surface-container-high); color: var(--md-on-surface);" onclick="skipStep3AndSubmit()">
+                            Skip & Finish
+                        </button>
+                        <button type="submit" class="btn btn-primary" onclick="return validateStep3()">
+                            <span class="material-symbols-rounded">check</span> Finish Setup
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        function updatePathPreview() {
+            const drive = document.getElementById('driveLetterSelect').value;
+            let sub = document.getElementById('subfolderInput').value.trim();
+            sub = sub.replace(/^[\\\/]+/, ''); // remove leading slashes
+            const full = sub ? drive + sub : drive;
+            document.getElementById('pathPreview').innerText = 'Target Path: ' + full;
+        }
+
+        function goToStep(stepNum) {
+            document.querySelectorAll('.wizard-step').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.step-indicator').forEach(el => el.classList.remove('active'));
+            
+            document.getElementById('step-' + stepNum).classList.add('active');
+            for (let i = 1; i <= stepNum; i++) {
+                document.getElementById('ind-' + i).classList.add('active');
+            }
+        }
+
+        function validateStep1AndNext() {
+            const davPort = parseInt(document.getElementById('webdavPortInput').value, 10);
+            const uiPort = parseInt(document.getElementById('webUIPortInput').value, 10);
+
+            if (isNaN(davPort) || davPort < 1 || davPort > 65535 || isNaN(uiPort) || uiPort < 1 || uiPort > 65535) {
+                alert('Ports must be numbers between 1 and 65535.');
+                return;
+            }
+            if (davPort === uiPort) {
+                alert('WebDAV Port and Web UI Port must be different.');
+                return;
+            }
+            goToStep(2);
+        }
+
+        function validateStep2AndNext() {
+            const user = document.getElementById('extraAdminUserInput').value.trim();
+            const pass = document.getElementById('extraAdminPassInput').value;
+            if (user && !pass) {
+                alert('Please provide a password for the additional administrator, or clear the username to skip.');
+                return;
+            }
+            if (!user && pass) {
+                alert('Please provide a username for the additional administrator, or clear the password to skip.');
+                return;
+            }
+            goToStep(3);
+        }
+
+        function skipStep2() {
+            document.getElementById('extraAdminUserInput').value = '';
+            document.getElementById('extraAdminPassInput').value = '';
+            goToStep(3);
+        }
+
+        function validateStep3() {
+            const user = document.getElementById('webdavUserInput').value.trim();
+            const pass = document.getElementById('webdavPassInput').value;
+            if (user && !pass) {
+                alert('Please provide a password for the WebDAV user, or click "Skip & Finish".');
+                return false;
+            }
+            if (!user && pass) {
+                alert('Please provide a username for the WebDAV user, or click "Skip & Finish".');
+                return false;
+            }
+            return true;
+        }
+
+        function skipStep3AndSubmit() {
+            document.getElementById('webdavUserInput').value = '';
+            document.getElementById('webdavPassInput').value = '';
+            document.getElementById('wizardForm').submit();
+        }
+
+        document.addEventListener('DOMContentLoaded', updatePathPreview);
+    </script>
+</body>
+</html>
