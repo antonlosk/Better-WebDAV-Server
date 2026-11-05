@@ -18,11 +18,18 @@ import (
 	kardianos "github.com/kardianos/service"
 )
 
-func init() {
-	// Ensure working directory is set to the executable location (critical for Windows Service)
+func ensureWorkingDir() {
 	if exePath, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			_ = os.Chdir(filepath.Dir(resolved))
+			return
+		}
 		_ = os.Chdir(filepath.Dir(exePath))
 	}
+}
+
+func init() {
+	ensureWorkingDir()
 }
 
 func openBrowser(url string) error {
@@ -54,6 +61,8 @@ func (p *program) Start(s kardianos.Service) error {
 }
 
 func (p *program) run() {
+	ensureWorkingDir()
+
 	_ = os.MkdirAll("data", 0755)
 	_ = os.MkdirAll("logs", 0755)
 
@@ -64,7 +73,7 @@ func (p *program) run() {
 	webdav.StartServer()
 	handlers.StartWebServer()
 
-	// Auto-open browser only on first setup and when running interactively (not as background service)
+	// Auto-open browser only on first setup and when running interactively
 	if kardianos.Interactive() {
 		go func() {
 			time.Sleep(1 * time.Second)
@@ -93,6 +102,8 @@ func (p *program) Stop(s kardianos.Service) error {
 }
 
 func main() {
+	ensureWorkingDir()
+
 	prg := &program{}
 	s, err := service.InitService(prg)
 	if err != nil {

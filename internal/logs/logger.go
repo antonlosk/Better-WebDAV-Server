@@ -20,6 +20,34 @@ type LogEntry struct {
 	CreatedAt string
 }
 
+// getAppDir returns absolute directory path where the binary resides
+func getAppDir() string {
+	if exePath, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			return filepath.Dir(resolved)
+		}
+		return filepath.Dir(exePath)
+	}
+	return "."
+}
+
+// safeLogWriter guarantees writes to log file even if stdout is an invalid handle in service mode
+type safeLogWriter struct {
+	fileWriter io.Writer
+}
+
+func (w *safeLogWriter) Write(p []byte) (n int, err error) {
+	// Always write to the file rotator first
+	n, err = w.fileWriter.Write(p)
+
+	// Best-effort console write: ignore invalid handle errors in background daemon/service mode
+	if os.Stdout != nil {
+		_, _ = os.Stdout.Write(p)
+	}
+
+	return n, err
+}
+
 // RotatingFileWriter manages size-based file rotation without whole-file rewrites
 type RotatingFileWriter struct {
 	mu       sync.Mutex
@@ -82,7 +110,6 @@ func (w *RotatingFileWriter) Write(p []byte) (n int, err error) {
 	defer w.mu.Unlock()
 
 	writeLen := int64(len(p))
-	// Rotate only if maxBytes > 0 (rotation is enabled)
 	if w.maxBytes > 0 && w.size > 0 && w.size+writeLen > w.maxBytes {
 		_ = w.rotate()
 	}
@@ -169,20 +196,22 @@ var (
 )
 
 func InitLogger() {
-	_ = os.MkdirAll("logs", 0755)
+	appDir := getAppDir()
+	_ = os.MkdirAll(filepath.Join(appDir, "logs"), 0755)
 
 	cfg := config.GetConfig()
 	maxBytes := parseMaxBytes(cfg.LogMaxSize, cfg.LogMaxUnit)
 
-	logPath := filepath.Join("logs", "server.log")
+	logPath := filepath.Join(appDir, "logs", "server.log")
 	var err error
 	rotator, err = NewRotatingFileWriter(logPath, maxBytes)
 	if err != nil {
 		log.Fatalf("Failed to initialize rotating logger: %v", err)
 	}
 
-	multiWriter := io.MultiWriter(os.Stdout, rotator)
-	log.SetOutput(multiWriter)
+	// Use safeLogWriter instead of io.MultiWriter to survive disconnected stdout in service mode
+	safeWriter := &safeLogWriter{fileWriter: rotator}
+	log.SetOutput(safeWriter)
 	log.SetFlags(log.Ldate | log.Ltime)
 
 	Log("INFO", "Application started")
@@ -260,7 +289,7 @@ func GetLogs(limit int) []LogEntry {
 	logMu.Lock()
 	defer logMu.Unlock()
 
-	logPath := filepath.Join("logs", "server.log")
+	logPath := filepath.Join(getAppDir(), "logs", "server.log")
 	file, err := os.Open(logPath)
 	if err != nil {
 		return nil

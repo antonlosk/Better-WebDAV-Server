@@ -2,18 +2,32 @@ package service
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/kardianos/service"
 )
 
 var svc service.Service
 
-// InitService configures the system daemon/service descriptor
+func getAppDir() string {
+	if exePath, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			return filepath.Dir(resolved)
+		}
+		return filepath.Dir(exePath)
+	}
+	return "."
+}
+
+// InitService configures the system daemon/service descriptor with explicit WorkingDirectory
 func InitService(prg service.Interface) (service.Service, error) {
+	dir := getAppDir()
 	svcConfig := &service.Config{
-		Name:        "BetterWebDAVServer",
-		DisplayName: "Better WebDAV Server",
-		Description: "High-performance WebDAV and Management Server",
+		Name:             "BetterWebDAVServer",
+		DisplayName:      "Better WebDAV Server",
+		Description:      "High-performance WebDAV and Management Server",
+		WorkingDirectory: dir,
 		Option: service.KeyValue{
 			"StartType": "automatic",
 		},
