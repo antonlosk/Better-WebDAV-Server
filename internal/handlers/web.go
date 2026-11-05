@@ -550,128 +550,145 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 	newUIPortToRedirect := ""
 
 	if r.Method == "POST" {
-		driveLetter := r.FormValue("drive_letter")
-		pathSubfolder := strings.TrimSpace(r.FormValue("path_subfolder"))
-		newDavPort := strings.TrimSpace(r.FormValue("webdav_port"))
-		newUIPort := strings.TrimSpace(r.FormValue("web_ui_port"))
-		newLogMaxSize := strings.TrimSpace(r.FormValue("log_max_size"))
-		newLogMaxUnit := strings.ToUpper(strings.TrimSpace(r.FormValue("log_max_unit")))
-		wantService := r.FormValue("system_service") == "on"
+		serviceAction := r.FormValue("service_action")
 
-		if newLogMaxUnit != "KB" && newLogMaxUnit != "MB" && newLogMaxUnit != "GB" && newLogMaxUnit != "UNLIMITED" {
-			newLogMaxUnit = "MB"
-		}
-
-		if newLogMaxUnit == "UNLIMITED" {
-			if newLogMaxSize == "" {
-				newLogMaxSize = "0"
+		// 1. Handle Dedicated Service Control Buttons
+		if serviceAction == "install_service" {
+			wantAutostart := r.FormValue("service_autostart") == "on"
+			if err := service.Install(wantAutostart); err != nil {
+				logs.Log("ERROR", "Failed to install system service: "+err.Error())
+				msg = "Failed to install service (Administrator rights required): " + err.Error()
+			} else {
+				logs.Log("INFO", "System service successfully installed")
+				msg = "System service installed successfully."
+			}
+		} else if serviceAction == "uninstall_service" {
+			if err := service.Uninstall(); err != nil {
+				logs.Log("ERROR", "Failed to uninstall system service: "+err.Error())
+				msg = "Failed to uninstall service (Administrator rights required): " + err.Error()
+			} else {
+				logs.Log("INFO", "System service successfully uninstalled")
+				msg = "System service uninstalled successfully."
 			}
 		} else {
-			if newLogMaxSize == "" {
-				newLogMaxSize = "64"
-			}
-		}
+			// 2. Standard Settings Save (Ports, Path, Log Size, and Autostart Mode)
+			driveLetter := r.FormValue("drive_letter")
+			pathSubfolder := strings.TrimSpace(r.FormValue("path_subfolder"))
+			newDavPort := strings.TrimSpace(r.FormValue("webdav_port"))
+			newUIPort := strings.TrimSpace(r.FormValue("web_ui_port"))
+			newLogMaxSize := strings.TrimSpace(r.FormValue("log_max_size"))
+			newLogMaxUnit := strings.ToUpper(strings.TrimSpace(r.FormValue("log_max_unit")))
 
-		davPortInt, errDav := strconv.Atoi(newDavPort)
-		uiPortInt, errUI := strconv.Atoi(newUIPort)
-		maxSizeInt, errSize := strconv.Atoi(newLogMaxSize)
-
-		cleanSub := strings.Trim(pathSubfolder, `/\`)
-		newPath := driveLetter
-		if cleanSub != "" {
-			newPath = filepath.ToSlash(filepath.Join(driveLetter, cleanSub))
-		}
-
-		if errDav != nil || davPortInt < 1 || davPortInt > 65535 || errUI != nil || uiPortInt < 1 || uiPortInt > 65535 {
-			msg = "Error: Ports must be valid numbers between 1 and 65535!"
-		} else if newLogMaxUnit != "UNLIMITED" && (errSize != nil || maxSizeInt <= 0) {
-			msg = "Error: Max log size must be a positive integer!"
-		} else if newDavPort == newUIPort {
-			msg = "Error: WebDAV and Web UI ports must be different!"
-		} else if err := os.MkdirAll(newPath, 0755); err != nil {
-			msg = "Error: Directory does not exist and could not be created: " + err.Error()
-		} else {
-			currentCfg := config.GetConfig()
-
-			var lDav net.Listener
-			var errListenDav error
-			if newDavPort != currentCfg.WebDAVPort {
-				lDav, errListenDav = net.Listen("tcp", ":"+newDavPort)
+			if newLogMaxUnit != "KB" && newLogMaxUnit != "MB" && newLogMaxUnit != "GB" && newLogMaxUnit != "UNLIMITED" {
+				newLogMaxUnit = "MB"
 			}
 
-			var lUI net.Listener
-			var errListenUI error
-			if newUIPort != currentCfg.WebUIPort {
-				lUI, errListenUI = net.Listen("tcp", ":"+newUIPort)
-			}
-
-			if errListenDav != nil {
-				msg = "Error: WebDAV Port is already in use!"
-				if lUI != nil {
-					_ = lUI.Close()
-				}
-			} else if errListenUI != nil {
-				msg = "Error: Web UI Port is already in use!"
-				if lDav != nil {
-					_ = lDav.Close()
+			if newLogMaxUnit == "UNLIMITED" {
+				if newLogMaxSize == "" {
+					newLogMaxSize = "0"
 				}
 			} else {
-				if lDav != nil {
-					_ = lDav.Close()
+				if newLogMaxSize == "" {
+					newLogMaxSize = "64"
 				}
-				if lUI != nil {
-					_ = lUI.Close()
+			}
+
+			davPortInt, errDav := strconv.Atoi(newDavPort)
+			uiPortInt, errUI := strconv.Atoi(newUIPort)
+			maxSizeInt, errSize := strconv.Atoi(newLogMaxSize)
+
+			cleanSub := strings.Trim(pathSubfolder, `/\`)
+			newPath := driveLetter
+			if cleanSub != "" {
+				newPath = filepath.ToSlash(filepath.Join(driveLetter, cleanSub))
+			}
+
+			if errDav != nil || davPortInt < 1 || davPortInt > 65535 || errUI != nil || uiPortInt < 1 || uiPortInt > 65535 {
+				msg = "Error: Ports must be valid numbers between 1 and 65535!"
+			} else if newLogMaxUnit != "UNLIMITED" && (errSize != nil || maxSizeInt <= 0) {
+				msg = "Error: Max log size must be a positive integer!"
+			} else if newDavPort == newUIPort {
+				msg = "Error: WebDAV and Web UI ports must be different!"
+			} else if err := os.MkdirAll(newPath, 0755); err != nil {
+				msg = "Error: Directory does not exist and could not be created: " + err.Error()
+			} else {
+				currentCfg := config.GetConfig()
+
+				var lDav net.Listener
+				var errListenDav error
+				if newDavPort != currentCfg.WebDAVPort {
+					lDav, errListenDav = net.Listen("tcp", ":"+newDavPort)
 				}
 
-				uiPortChanged := (newUIPort != currentCfg.WebUIPort)
-				davChanged := (newDavPort != currentCfg.WebDAVPort || newPath != currentCfg.SharedPath)
+				var lUI net.Listener
+				var errListenUI error
+				if newUIPort != currentCfg.WebUIPort {
+					lUI, errListenUI = net.Listen("tcp", ":"+newUIPort)
+				}
 
-				err := config.SaveConfig(config.Settings{
-					WebDAVPort: newDavPort,
-					WebUIPort:  newUIPort,
-					SharedPath: newPath,
-					LogMaxSize: newLogMaxSize,
-					LogMaxUnit: newLogMaxUnit,
-				})
-
-				if err != nil {
-					logs.Log("ERROR", "Failed to save configuration: "+err.Error())
-					msg = "Error: Failed to save settings to database!"
+				if errListenDav != nil {
+					msg = "Error: WebDAV Port is already in use!"
+					if lUI != nil {
+						_ = lUI.Close()
+					}
+				} else if errListenUI != nil {
+					msg = "Error: Web UI Port is already in use!"
+					if lDav != nil {
+						_ = lDav.Close()
+					}
 				} else {
-					logs.UpdateRotationLimit(newLogMaxSize, newLogMaxUnit)
-
-					// Toggle OS system service installation
-					serviceInstalled := service.IsInstalled()
-					if wantService && !serviceInstalled {
-						if err := service.Install(); err != nil {
-							logs.Log("ERROR", "Failed to install system service: "+err.Error())
-							msg = "Settings saved, but failed to install system service (Administrator rights required): " + err.Error()
-						} else {
-							logs.Log("INFO", "System service successfully installed and configured to autostart")
-						}
-					} else if !wantService && serviceInstalled {
-						if err := service.Uninstall(); err != nil {
-							logs.Log("ERROR", "Failed to uninstall system service: "+err.Error())
-							msg = "Settings saved, but failed to uninstall system service (Administrator rights required): " + err.Error()
-						} else {
-							logs.Log("INFO", "System service successfully uninstalled")
-						}
+					if lDav != nil {
+						_ = lDav.Close()
+					}
+					if lUI != nil {
+						_ = lUI.Close()
 					}
 
-					if davChanged {
-						logs.Log("INFO", "WebDAV settings changed. Restarting WebDAV...")
-						webdav.RestartServer()
-					}
+					uiPortChanged := (newUIPort != currentCfg.WebUIPort)
+					davChanged := (newDavPort != currentCfg.WebDAVPort || newPath != currentCfg.SharedPath)
 
-					if uiPortChanged {
-						newUIPortToRedirect = newUIPort
-						msg = fmt.Sprintf("Settings saved! Web UI port changed to %s. Redirecting...", newUIPort)
-						go func() {
-							time.Sleep(500 * time.Millisecond)
-							RestartWebServer()
-						}()
-					} else if msg == "" {
-						msg = "Settings saved successfully!"
+					err := config.SaveConfig(config.Settings{
+						WebDAVPort: newDavPort,
+						WebUIPort:  newUIPort,
+						SharedPath: newPath,
+						LogMaxSize: newLogMaxSize,
+						LogMaxUnit: newLogMaxUnit,
+					})
+
+					if err != nil {
+						logs.Log("ERROR", "Failed to save configuration: "+err.Error())
+						msg = "Error: Failed to save settings to database!"
+					} else {
+						logs.UpdateRotationLimit(newLogMaxSize, newLogMaxUnit)
+
+						// Update service autostart without reinstalling
+						if service.IsInstalled() {
+							wantAutostart := r.FormValue("service_autostart") == "on"
+							if wantAutostart != service.IsAutostartEnabled() {
+								if err := service.SetAutostart(wantAutostart); err != nil {
+									logs.Log("ERROR", "Failed to update service autostart: "+err.Error())
+									msg += " Warning: Failed to change autostart (Admin rights required): " + err.Error()
+								} else {
+									logs.Log("INFO", fmt.Sprintf("Service autostart changed to: %v", wantAutostart))
+								}
+							}
+						}
+
+						if davChanged {
+							logs.Log("INFO", "WebDAV settings changed. Restarting WebDAV...")
+							webdav.RestartServer()
+						}
+
+						if uiPortChanged {
+							newUIPortToRedirect = newUIPort
+							msg = fmt.Sprintf("Settings saved! Web UI port changed to %s. Redirecting...", newUIPort)
+							go func() {
+								time.Sleep(500 * time.Millisecond)
+								RestartWebServer()
+							}()
+						} else if msg == "" {
+							msg = "Settings saved successfully!"
+						}
 					}
 				}
 			}
@@ -689,6 +706,7 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		"CurrentDrive":       currentDrive,
 		"CurrentSubfolder":   currentSub,
 		"IsServiceInstalled": service.IsInstalled(),
+		"IsAutostartEnabled": service.IsAutostartEnabled(),
 	})
 }
 

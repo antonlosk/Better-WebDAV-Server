@@ -56,21 +56,54 @@
             </small>
         </div>
 
-        <!-- СИСТЕМНАЯ СЛУЖБА / АВТОЗАПУСК С ОПЕРАЦИОННОЙ СИСТЕМОЙ -->
-        <div class="form-group" style="margin-top: 24px;">
-            <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 16px; background: var(--md-surface-container-high); border-radius: 12px; gap: 16px;">
-                <div style="display: flex; align-items: center; gap: 14px;">
-                    <span class="material-symbols-rounded" style="color: var(--md-primary); font-size: 28px;">settings_system_daydream</span>
-                    <div>
-                        <div style="font-weight: 500; color: var(--md-on-surface); font-size: 1rem;">Run as System Service (Autostart on boot)</div>
-                        <small style="color: var(--md-on-surface-variant); margin: 0; line-height: 1.3;">Automatically starts server in background after operating system boots up.</small>
-                    </div>
+        <!-- SYSTEM SERVICE MANAGEMENT -->
+        <div style="margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--md-surface-container-high);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span class="material-symbols-rounded" style="color: var(--md-primary); font-size: 26px;">settings_system_daydream</span>
+                    <strong style="font-size: 1.05rem; color: var(--md-on-surface);">System Service</strong>
                 </div>
-                <input type="checkbox" name="system_service" {{if .IsServiceInstalled}}checked{{end}} style="width: 22px; height: 22px; accent-color: var(--md-primary); cursor: pointer; flex-shrink: 0;">
+                {{if .IsServiceInstalled}}
+                <span class="badge bg-success">
+                    <span class="material-symbols-rounded" style="font-size: 14px; margin-right: 4px;">check_circle</span> Installed
+                </span>
+                {{else}}
+                <span class="badge bg-warning">
+                    <span class="material-symbols-rounded" style="font-size: 14px; margin-right: 4px;">cancel</span> Not Installed
+                </span>
+                {{end}}
+            </div>
+
+            <!-- Install / Uninstall Action Buttons -->
+            <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                {{if not .IsServiceInstalled}}
+                <button type="submit" name="service_action" value="install_service" class="btn btn-sm btn-primary">
+                    <span class="material-symbols-rounded" style="font-size: 18px;">build</span> Install Service
+                </button>
+                {{else}}
+                <button type="submit" name="service_action" value="uninstall_service" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure you want to completely uninstall the system service?');">
+                    <span class="material-symbols-rounded" style="font-size: 18px;">delete</span> Uninstall Service
+                </button>
+                {{end}}
+            </div>
+
+            <!-- Autostart Checkbox (Active ONLY if Service is Installed) -->
+            <label style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: var(--md-surface-container-high); border-radius: 12px; gap: 16px; transition: opacity 0.2s ease; {{if not .IsServiceInstalled}}opacity: 0.5; cursor: not-allowed;{{else}}cursor: pointer;{{end}}">
+                <div>
+                    <div style="font-weight: 500; color: var(--md-on-surface);">Autostart on System Boot</div>
+                    <small style="color: var(--md-on-surface-variant); margin: 0; display: block; margin-top: 2px;">
+                        {{if .IsServiceInstalled}}
+                        Automatically launch server in background after system boots.
+                        {{else}}
+                        Install the system service first to enable automatic startup.
+                        {{end}}
+                    </small>
+                </div>
+                <input type="checkbox" name="service_autostart" {{if .IsAutostartEnabled}}checked{{end}} {{if not .IsServiceInstalled}}disabled{{end}} style="width: 20px; height: 20px; accent-color: var(--md-primary); {{if not .IsServiceInstalled}}cursor: not-allowed;{{else}}cursor: pointer;{{end}}">
             </label>
         </div>
 
-        <button type="submit" class="btn btn-primary" style="margin-top: 24px;">
+        <button type="submit" class="btn btn-primary w-100" style="margin-top: 28px;">
             <span class="material-symbols-rounded">save</span> Save Settings
         </button>
     </form>
