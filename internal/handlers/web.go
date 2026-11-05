@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gorilla/sessions"
+	kardianos "github.com/kardianos/service"
 	"github.com/shirou/gopsutil/v3/disk"
 )
 
@@ -556,6 +557,7 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
 		serviceAction := r.FormValue("service_action")
 
+		// 1. Dedicated Service Control Buttons
 		if serviceAction == "install_service" {
 			wantAutostart := r.FormValue("service_autostart") == "on"
 			if err := service.Install(wantAutostart); err != nil {
@@ -571,9 +573,19 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 				msg = "Failed to uninstall service (Administrator rights required): " + err.Error()
 			} else {
 				logs.Log("INFO", "System service successfully uninstalled")
-				msg = "System service uninstalled successfully."
+				if !kardianos.Interactive() {
+					// When running as a service, exit the process so SCM immediately purges the service record
+					msg = "System service uninstalled. The background process will now terminate."
+					go func() {
+						time.Sleep(1 * time.Second)
+						os.Exit(0)
+					}()
+				} else {
+					msg = "System service uninstalled successfully."
+				}
 			}
 		} else {
+			// 2. Standard Settings Save
 			driveLetter := r.FormValue("drive_letter")
 			pathSubfolder := strings.TrimSpace(r.FormValue("path_subfolder"))
 			newDavPort := strings.TrimSpace(r.FormValue("webdav_port"))
@@ -663,6 +675,7 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 					} else {
 						logs.UpdateRotationLimit(newLogMaxSize, newLogMaxUnit)
 
+						// Update service autostart without deleting or reinstalling service
 						if service.IsInstalled() {
 							wantAutostart := r.FormValue("service_autostart") == "on"
 							if wantAutostart != service.IsAutostartEnabled() {
@@ -919,7 +932,9 @@ func usersHandler(w http.ResponseWriter, r *http.Request) {
 		users = append(users, u)
 	}
 
-	renderTemplate(w, r, "users", map[string]interface{}{"Users": users})
+	renderTemplate(w, r, "users", map[string]interface{}{
+		"Users": users,
+	})
 }
 
 func logsHandler(w http.ResponseWriter, r *http.Request) {

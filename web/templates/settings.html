@@ -56,29 +56,31 @@
             </small>
         </div>
 
-        <!-- SYSTEM SERVICE MANAGEMENT -->
+        <!-- СЕКЦИЯ СИСТЕМНОЙ СЛУЖБЫ -->
         <div style="margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--md-surface-container-high);">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span class="material-symbols-rounded" style="color: var(--md-primary); font-size: 26px;">settings_system_daydream</span>
                     <strong style="font-size: 1.05rem; color: var(--md-on-surface);">System Service</strong>
                 </div>
-                {{if .IsServiceInstalled}}
-                <span class="badge bg-success">
-                    <span class="material-symbols-rounded" style="font-size: 14px; margin-right: 4px;">check_circle</span> Installed
-                </span>
-                {{else}}
-                <span class="badge bg-warning">
-                    <span class="material-symbols-rounded" style="font-size: 14px; margin-right: 4px;">cancel</span> Not Installed
-                </span>
-                {{end}}
+                <div>
+                    {{if .IsServiceInstalled}}
+                    <span class="badge bg-success">
+                        <span class="material-symbols-rounded" style="font-size: 14px; margin-right: 4px;">check_circle</span> Installed
+                    </span>
+                    {{else}}
+                    <span class="badge bg-warning">
+                        <span class="material-symbols-rounded" style="font-size: 14px; margin-right: 4px;">cancel</span> Not Installed
+                    </span>
+                    {{end}}
+                </div>
             </div>
 
-            <!-- Install / Uninstall Action Buttons -->
+            <!-- Кнопки установки / удаления -->
             <div style="display: flex; gap: 12px; margin-bottom: 16px;">
                 {{if not .IsServiceInstalled}}
                 <button type="submit" name="service_action" value="install_service" class="btn btn-sm btn-primary">
-                    <span class="material-symbols-rounded" style="font-size: 18px;">build</span> Install Service
+                    <span class="material-symbols-rounded" style="font-size: 18px;">add_box</span> Install Service
                 </button>
                 {{else}}
                 <button type="submit" name="service_action" value="uninstall_service" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure you want to completely uninstall the system service?');">
@@ -87,8 +89,8 @@
                 {{end}}
             </div>
 
-            <!-- Autostart Checkbox (Active ONLY if Service is Installed) -->
-            <label style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: var(--md-surface-container-high); border-radius: 12px; gap: 16px; transition: opacity 0.2s ease; {{if not .IsServiceInstalled}}opacity: 0.5; cursor: not-allowed;{{else}}cursor: pointer;{{end}}">
+            <!-- Чекбокс автозапуска: активен ТОЛЬКО при установленной службе -->
+            <label style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: var(--md-surface-container-high); border-radius: 12px; gap: 16px; transition: opacity 0.2s ease; {{if not .IsServiceInstalled}}opacity: 0.4; cursor: not-allowed;{{else}}cursor: pointer;{{end}}">
                 <div>
                     <div style="font-weight: 500; color: var(--md-on-surface);">Autostart on System Boot</div>
                     <small style="color: var(--md-on-surface-variant); margin: 0; display: block; margin-top: 2px;">
