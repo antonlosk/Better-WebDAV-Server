@@ -6,15 +6,24 @@ import (
 	"betterwebdav/internal/database"
 	"betterwebdav/internal/handlers"
 	"betterwebdav/internal/logs"
+	"betterwebdav/internal/service"
 	"betterwebdav/internal/webdav"
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
+	"path/filepath"
 	"runtime"
-	"syscall"
 	"time"
+
+	kardianos "github.com/kardianos/service"
 )
+
+func init() {
+	// Ensure working directory is set to the executable location (critical for Windows Service)
+	if exePath, err := os.Executable(); err == nil {
+		_ = os.Chdir(filepath.Dir(exePath))
+	}
+}
 
 func openBrowser(url string) error {
 	var cmd string
@@ -24,7 +33,7 @@ func openBrowser(url string) error {
 	case "windows":
 		cmd = "rundll32"
 		args = []string{"url.dll,FileProtocolHandler", url}
-	case "darwin": // macOS
+	case "darwin":
 		cmd = "open"
 		args = []string{url}
 	case "linux":
@@ -37,7 +46,14 @@ func openBrowser(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
-func main() {
+type program struct{}
+
+func (p *program) Start(s kardianos.Service) error {
+	go p.run()
+	return nil
+}
+
+func (p *program) run() {
 	_ = os.MkdirAll("data", 0755)
 	_ = os.MkdirAll("logs", 0755)
 
@@ -48,40 +64,43 @@ func main() {
 	webdav.StartServer()
 	handlers.StartWebServer()
 
-	// Auto-open browser on first launch only
-	go func() {
-		time.Sleep(1 * time.Second)
-		if !auth.AdminExists() {
-			cfg := config.GetConfig()
-			url := fmt.Sprintf("http://localhost:%s", cfg.WebUIPort)
+	// Auto-open browser only on first setup and when running interactively (not as background service)
+	if kardianos.Interactive() {
+		go func() {
+			time.Sleep(1 * time.Second)
+			if !auth.AdminExists() {
+				cfg := config.GetConfig()
+				url := fmt.Sprintf("http://localhost:%s", cfg.WebUIPort)
 
-			logs.Log("INFO", "Initial setup required. Opening browser...")
-			if err := openBrowser(url); err != nil {
-				logs.Log("WARNING", "Failed to auto-open browser: "+err.Error())
+				logs.Log("INFO", "Initial setup required. Opening browser...")
+				if err := openBrowser(url); err != nil {
+					logs.Log("WARNING", "Failed to auto-open browser: "+err.Error())
+				}
 			}
-		}
-	}()
+		}()
+	}
+}
 
-	// Graceful shutdown signal listener
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-
-	<-quit
-
-	fmt.Println("\n[SYSTEM] Received shutdown signal. Initiating shutdown...")
+func (p *program) Stop(s kardianos.Service) error {
 	logs.Log("INFO", "Shutdown initiated by system signal")
 
-	// 1. Stop Web UI Server
 	handlers.StopWebServer()
-
-	// 2. Stop WebDAV Server
 	webdav.StopServer()
-
-	// 3. Close SQLite Database Connection
 	database.CloseDB()
-
-	// 4. Close Server Log File
 	logs.CloseLogger()
 
-	fmt.Println("[SYSTEM] Application exited cleanly. Goodbye!")
+	return nil
+}
+
+func main() {
+	prg := &program{}
+	s, err := service.InitService(prg)
+	if err != nil {
+		fmt.Printf("Service initialization failed: %v\n", err)
+		return
+	}
+
+	if err = s.Run(); err != nil {
+		fmt.Printf("Service execution error: %v\n", err)
+	}
 }

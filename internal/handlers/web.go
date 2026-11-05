@@ -5,6 +5,7 @@ import (
 	"betterwebdav/internal/config"
 	"betterwebdav/internal/database"
 	"betterwebdav/internal/logs"
+	"betterwebdav/internal/service"
 	"betterwebdav/internal/webdav"
 	"betterwebdav/web"
 	"context"
@@ -555,6 +556,7 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		newUIPort := strings.TrimSpace(r.FormValue("web_ui_port"))
 		newLogMaxSize := strings.TrimSpace(r.FormValue("log_max_size"))
 		newLogMaxUnit := strings.ToUpper(strings.TrimSpace(r.FormValue("log_max_unit")))
+		wantService := r.FormValue("system_service") == "on"
 
 		if newLogMaxUnit != "KB" && newLogMaxUnit != "MB" && newLogMaxUnit != "GB" && newLogMaxUnit != "UNLIMITED" {
 			newLogMaxUnit = "MB"
@@ -638,6 +640,24 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 				} else {
 					logs.UpdateRotationLimit(newLogMaxSize, newLogMaxUnit)
 
+					// Toggle OS system service installation
+					serviceInstalled := service.IsInstalled()
+					if wantService && !serviceInstalled {
+						if err := service.Install(); err != nil {
+							logs.Log("ERROR", "Failed to install system service: "+err.Error())
+							msg = "Settings saved, but failed to install system service (Administrator rights required): " + err.Error()
+						} else {
+							logs.Log("INFO", "System service successfully installed and configured to autostart")
+						}
+					} else if !wantService && serviceInstalled {
+						if err := service.Uninstall(); err != nil {
+							logs.Log("ERROR", "Failed to uninstall system service: "+err.Error())
+							msg = "Settings saved, but failed to uninstall system service (Administrator rights required): " + err.Error()
+						} else {
+							logs.Log("INFO", "System service successfully uninstalled")
+						}
+					}
+
 					if davChanged {
 						logs.Log("INFO", "WebDAV settings changed. Restarting WebDAV...")
 						webdav.RestartServer()
@@ -650,7 +670,7 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 							time.Sleep(500 * time.Millisecond)
 							RestartWebServer()
 						}()
-					} else {
+					} else if msg == "" {
 						msg = "Settings saved successfully!"
 					}
 				}
@@ -662,12 +682,13 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 	currentDrive, currentSub := splitPathToDriveAndSub(config.GetConfig().SharedPath, drives)
 
 	renderTemplate(w, r, "settings", map[string]interface{}{
-		"Config":           config.GetConfig(),
-		"Message":          msg,
-		"NewUIPort":        newUIPortToRedirect,
-		"Drives":           drives,
-		"CurrentDrive":     currentDrive,
-		"CurrentSubfolder": currentSub,
+		"Config":             config.GetConfig(),
+		"Message":            msg,
+		"NewUIPort":          newUIPortToRedirect,
+		"Drives":             drives,
+		"CurrentDrive":       currentDrive,
+		"CurrentSubfolder":   currentSub,
+		"IsServiceInstalled": service.IsInstalled(),
 	})
 }
 
