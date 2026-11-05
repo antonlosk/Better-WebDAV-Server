@@ -8,9 +8,21 @@
 <div class="card max-w-600">
     <form method="POST">
         {{.CSRFField}}
+        
+        <!-- ВЫБОР ДИСКА И ПОДПАПКИ С ВЫПАДАЮЩИМ СПИСКОМ -->
         <div class="form-group">
-            <label>Shared Path (Directory)</label>
-            <input type="text" name="shared_path" value="{{.Config.SharedPath}}" required>
+            <label>Shared Path (Drive Letter & Folder)</label>
+            <div style="display: flex; gap: 12px;">
+                <select name="drive_letter" id="driveLetterSelect" onchange="updatePathPreview()" style="width: 120px; padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px; font-size: 1rem; color: var(--md-on-surface); outline: none; cursor: pointer;">
+                    {{range .Drives}}
+                    <option value="{{.}}" {{if eq . $.CurrentDrive}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+                <input type="text" name="path_subfolder" id="subfolderInput" value="{{.CurrentSubfolder}}" placeholder="Folder name (optional, e.g. Shared)" oninput="updatePathPreview()" style="flex: 1; padding: 14px; background: var(--md-surface-container-high); border: 1px solid transparent; border-radius: 12px; font-size: 1rem; color: var(--md-on-surface); outline: none;">
+            </div>
+            <div id="pathPreview" style="margin-top: 8px; padding: 10px 14px; background: var(--md-surface-container-high); border-radius: 8px; font-family: monospace; font-size: 0.9rem; color: var(--md-primary);">
+                Target Path: {{.Config.SharedPath}}
+            </div>
         </div>
         
         <div style="display: flex; gap: 16px; flex-wrap: wrap;">
@@ -51,8 +63,15 @@
     </form>
 </div>
 
-<!-- JS SCRIPT TO TOGGLE INPUT WHEN UNLIMITED IS SELECTED -->
 <script>
+    function updatePathPreview() {
+        const drive = document.getElementById('driveLetterSelect').value;
+        let sub = document.getElementById('subfolderInput').value.trim();
+        sub = sub.replace(/^[\\\/]+/, ''); // remove leading slashes
+        const full = sub ? drive + sub : drive;
+        document.getElementById('pathPreview').innerText = 'Target Path: ' + full;
+    }
+
     function toggleLogSizeInput() {
         const unitSelect = document.getElementById('logMaxUnitSelect');
         const sizeInput = document.getElementById('logMaxSizeInput');
@@ -66,10 +85,13 @@
             sizeInput.required = true;
         }
     }
-    document.addEventListener('DOMContentLoaded', toggleLogSizeInput);
+
+    document.addEventListener('DOMContentLoaded', () => {
+        toggleLogSizeInput();
+        updatePathPreview();
+    });
 </script>
 
-<!-- AUTOMATIC REDIRECT TO NEW PORT IF CHANGED -->
 {{if .NewUIPort}}
 <script>
     setTimeout(() => {

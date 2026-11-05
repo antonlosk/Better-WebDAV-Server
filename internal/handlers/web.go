@@ -129,13 +129,28 @@ func getAvailableDrives() []string {
 	return drives
 }
 
+func splitPathToDriveAndSub(fullPath string, availableDrives []string) (string, string) {
+	fullPath = filepath.ToSlash(fullPath)
+	for _, drive := range availableDrives {
+		driveSlash := filepath.ToSlash(drive)
+		if strings.HasPrefix(strings.ToUpper(fullPath), strings.ToUpper(driveSlash)) {
+			sub := fullPath[len(driveSlash):]
+			return driveSlash, strings.Trim(sub, "/")
+		}
+	}
+	if len(fullPath) >= 3 && fullPath[1] == ':' {
+		return fullPath[:3], strings.Trim(fullPath[3:], "/")
+	}
+	return "C:/", strings.Trim(fullPath, "/")
+}
+
 func createMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/static/web/", http.StripPrefix("/static/web/", http.FileServer(http.FS(web.FS))))
 
 	mux.HandleFunc("/", authMiddleware(dashboardHandler))
 	mux.HandleFunc("/setup", setupHandler)
-	mux.HandleFunc("/setup-wizard", setupWizardHandler) // Wizard Route
+	mux.HandleFunc("/setup-wizard", setupWizardHandler)
 	mux.HandleFunc("/login", loginHandler)
 	mux.HandleFunc("/logout", logoutHandler)
 	mux.HandleFunc("/settings", authMiddleware(settingsHandler))
@@ -264,7 +279,6 @@ func setupHandler(w http.ResponseWriter, r *http.Request) {
 	session, _ := store.Get(r, "admin-session")
 	setupActive, _ := session.Values["setup_active"].(bool)
 
-	// If admin already exists and wizard is not active, redirect to login
 	if auth.AdminExists() && !setupActive {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -279,7 +293,6 @@ func setupHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Activate setup session flag
 			session.Values["setup_active"] = true
 			session.Save(r, w)
 
@@ -295,7 +308,6 @@ func setupWizardHandler(w http.ResponseWriter, r *http.Request) {
 	session, _ := store.Get(r, "admin-session")
 	setupActive, _ := session.Values["setup_active"].(bool)
 
-	// Guard: setup-wizard can only be accessed while setup session flag is active
 	if !auth.AdminExists() {
 		http.Redirect(w, r, "/setup", http.StatusFound)
 		return
@@ -337,14 +349,12 @@ func setupWizardHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Construct Shared Path
 		cleanSub := strings.Trim(pathSubfolder, `/\`)
 		targetPath := driveLetter
 		if cleanSub != "" {
 			targetPath = filepath.ToSlash(filepath.Join(driveLetter, cleanSub))
 		}
 
-		// Ensure directory exists
 		if err := os.MkdirAll(targetPath, 0755); err != nil {
 			logs.Log("ERROR", "Failed to create shared path: "+err.Error())
 			renderStandalone(w, r, "setup_wizard", map[string]interface{}{
@@ -356,7 +366,6 @@ func setupWizardHandler(w http.ResponseWriter, r *http.Request) {
 
 		currentCfg := config.GetConfig()
 
-		// Save configuration
 		_ = config.SaveConfig(config.Settings{
 			WebDAVPort: newDavPort,
 			WebUIPort:  newUIPort,
@@ -365,10 +374,8 @@ func setupWizardHandler(w http.ResponseWriter, r *http.Request) {
 			LogMaxUnit: currentCfg.LogMaxUnit,
 		})
 
-		// Restart WebDAV server with new configuration
 		webdav.RestartServer()
 
-		// Optional: Add second administrator
 		if extraAdminUser != "" && extraAdminPass != "" {
 			hash, err := auth.HashPassword(extraAdminPass)
 			if err == nil {
@@ -379,7 +386,6 @@ func setupWizardHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Optional: Add WebDAV user
 		if webdavUser != "" && webdavPass != "" {
 			hash, err := auth.HashPassword(webdavPass)
 			if err == nil {
@@ -397,12 +403,10 @@ func setupWizardHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Finish setup wizard: clear setup session flag
 		session.Values["setup_active"] = false
 		session.Save(r, w)
 		logs.Log("INFO", "Quick Server Setup completed successfully.")
 
-		// Handle UI port change if needed
 		if newUIPort != currentCfg.WebUIPort {
 			go func() {
 				time.Sleep(500 * time.Millisecond)
@@ -545,9 +549,10 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 	newUIPortToRedirect := ""
 
 	if r.Method == "POST" {
-		newPath := r.FormValue("shared_path")
-		newDavPort := r.FormValue("webdav_port")
-		newUIPort := r.FormValue("web_ui_port")
+		driveLetter := r.FormValue("drive_letter")
+		pathSubfolder := strings.TrimSpace(r.FormValue("path_subfolder"))
+		newDavPort := strings.TrimSpace(r.FormValue("webdav_port"))
+		newUIPort := strings.TrimSpace(r.FormValue("web_ui_port"))
 		newLogMaxSize := strings.TrimSpace(r.FormValue("log_max_size"))
 		newLogMaxUnit := strings.ToUpper(strings.TrimSpace(r.FormValue("log_max_unit")))
 
@@ -569,14 +574,20 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		uiPortInt, errUI := strconv.Atoi(newUIPort)
 		maxSizeInt, errSize := strconv.Atoi(newLogMaxSize)
 
+		cleanSub := strings.Trim(pathSubfolder, `/\`)
+		newPath := driveLetter
+		if cleanSub != "" {
+			newPath = filepath.ToSlash(filepath.Join(driveLetter, cleanSub))
+		}
+
 		if errDav != nil || davPortInt < 1 || davPortInt > 65535 || errUI != nil || uiPortInt < 1 || uiPortInt > 65535 {
 			msg = "Error: Ports must be valid numbers between 1 and 65535!"
 		} else if newLogMaxUnit != "UNLIMITED" && (errSize != nil || maxSizeInt <= 0) {
 			msg = "Error: Max log size must be a positive integer!"
 		} else if newDavPort == newUIPort {
 			msg = "Error: WebDAV and Web UI ports must be different!"
-		} else if _, err := os.Stat(newPath); os.IsNotExist(err) {
-			msg = "Error: Directory does not exist!"
+		} else if err := os.MkdirAll(newPath, 0755); err != nil {
+			msg = "Error: Directory does not exist and could not be created: " + err.Error()
 		} else {
 			currentCfg := config.GetConfig()
 
@@ -647,10 +658,16 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	drives := getAvailableDrives()
+	currentDrive, currentSub := splitPathToDriveAndSub(config.GetConfig().SharedPath, drives)
+
 	renderTemplate(w, r, "settings", map[string]interface{}{
-		"Config":    config.GetConfig(),
-		"Message":   msg,
-		"NewUIPort": newUIPortToRedirect,
+		"Config":           config.GetConfig(),
+		"Message":          msg,
+		"NewUIPort":        newUIPortToRedirect,
+		"Drives":           drives,
+		"CurrentDrive":     currentDrive,
+		"CurrentSubfolder": currentSub,
 	})
 }
 
