@@ -190,9 +190,11 @@ func StopWebServer() {
 	defer uiMu.Unlock()
 
 	if uiServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
-		uiServer.Shutdown(ctx)
+		if err := uiServer.Shutdown(ctx); err != nil {
+			_ = uiServer.Close()
+		}
 		logs.Log("INFO", "Web Management UI stopped")
 	}
 }
@@ -202,9 +204,11 @@ func RestartWebServer() {
 	defer uiMu.Unlock()
 
 	if uiServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
-		uiServer.Shutdown(ctx)
+		if err := uiServer.Shutdown(ctx); err != nil {
+			_ = uiServer.Close()
+		}
 	}
 
 	cfg := config.GetConfig()
@@ -552,7 +556,6 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
 		serviceAction := r.FormValue("service_action")
 
-		// 1. Handle Dedicated Service Control Buttons
 		if serviceAction == "install_service" {
 			wantAutostart := r.FormValue("service_autostart") == "on"
 			if err := service.Install(wantAutostart); err != nil {
@@ -571,7 +574,6 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 				msg = "System service uninstalled successfully."
 			}
 		} else {
-			// 2. Standard Settings Save (Ports, Path, Log Size, and Autostart Mode)
 			driveLetter := r.FormValue("drive_letter")
 			pathSubfolder := strings.TrimSpace(r.FormValue("path_subfolder"))
 			newDavPort := strings.TrimSpace(r.FormValue("webdav_port"))
@@ -661,7 +663,6 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 					} else {
 						logs.UpdateRotationLimit(newLogMaxSize, newLogMaxUnit)
 
-						// Update service autostart without reinstalling
 						if service.IsInstalled() {
 							wantAutostart := r.FormValue("service_autostart") == "on"
 							if wantAutostart != service.IsAutostartEnabled() {

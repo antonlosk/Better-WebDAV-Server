@@ -98,7 +98,6 @@ func StartServer() error {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		ip := auth.GetClientIP(r)
 
-		// Isolate lockout check specifically for "webdav" service
 		if auth.IsLockedOut(ip, "webdav") {
 			http.Error(w, "Too many failed attempts. Try again later.", http.StatusTooManyRequests)
 			return
@@ -236,18 +235,27 @@ func StopServer() {
 	mu.Unlock()
 
 	transfers := activeTransfers.Load()
+
+	// Fast shutdown if no active transfers, short wait if transferring
+	timeout := 1 * time.Second
 	if transfers > 0 {
-		logs.Log("INFO", fmt.Sprintf("Graceful Shutdown: Waiting for %d active transfer(s) to finish...", transfers))
+		logs.Log("INFO", fmt.Sprintf("Graceful Shutdown: Waiting for %d active transfer(s)...", transfers))
+		timeout = 4 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	err := srv.Shutdown(ctx)
-	if err != nil {
-		logs.Log("WARNING", "WebDAV Server forced to shutdown: "+err.Error())
+	if err := srv.Shutdown(ctx); err != nil {
+		// Immediately terminate hanging keep-alive connections from Explorer/browser
+		_ = srv.Close()
 	}
-	<-done
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		_ = srv.Close()
+	}
 
 	logs.Log("INFO", "WebDAV Server stopped")
 }
